@@ -73,12 +73,13 @@ def process_team_stats(events, team_name, venue='home'):
         'conceded_avg': sum(g['conceded'] for g in games) / len(games)
     }
 
-# --- INTERFACE ---
-# Inicializar estado da sessão
+# --- INICIALIZAR ESTADO ---
 if 'multiple_bets' not in st.session_state:
     st.session_state.multiple_bets = []
+if 'show_analysis' not in st.session_state:
+    st.session_state.show_analysis = False
 
-# Carregar dados
+# --- CARREGAR DADOS ---
 with st.spinner("🔄 Carregando dados..."):
     events, error, season_used = get_season_results()
 
@@ -86,7 +87,6 @@ if error or not events:
     st.error(f"❌ {error}")
     st.stop()
 
-# Extrair times
 teams = set()
 completed_games = 0
 for event in events:
@@ -110,12 +110,12 @@ with col2:
     away_team = st.selectbox('✈️ Time Visitante', team_list, index=1)
 
 if home_team != away_team:
-    analyze_btn = st.button("🔍 ANALISAR JOGO", type="primary", use_container_width=True)
+    if st.button("🔍 ANALISAR JOGO", type="primary", use_container_width=True):
+        st.session_state.show_analysis = True
     
-    if analyze_btn:
-        with st.spinner("Calculando..."):
-            home_stats = process_team_stats(events, home_team, 'home')
-            away_stats = process_team_stats(events, away_team, 'away')
+    if st.session_state.show_analysis:
+        home_stats = process_team_stats(events, home_team, 'home')
+        away_stats = process_team_stats(events, away_team, 'away')
         
         if home_stats and away_stats:
             exp_home = (home_stats['scored_avg'] + away_stats['conceded_avg']) / 2
@@ -134,7 +134,10 @@ if home_team != away_team:
             prob_matrix = calculate_match_probabilities(exp_home, exp_away)
             markets = calculate_markets(prob_matrix)
             
-            st.subheader("🎯 Mercados")
+            st.subheader("🎯 Mercados com EV+")
+            
+            # Container para cada mercado
+            markets_data = []
             
             # Resultado
             st.write("**Resultado do Jogo:**")
@@ -143,56 +146,53 @@ if home_team != away_team:
             with col1:
                 st.write(f"**{home_team}**")
                 st.write(f"Prob: {markets['home_win']*100:.1f}%")
-                odd_h = st.number_input("Odd:", 1.01, value=2.00, step=0.01, key="h")
+                odd_h = st.number_input("Odd:", 1.01, value=2.00, step=0.01, key=f"h_{home_team}_{away_team}")
                 ev_h = calculate_ev(markets['home_win'], odd_h)
                 st.metric("EV", f"{ev_h*100:.1f}%", delta="✅" if ev_h > 0 else "")
+                
                 if ev_h > 0:
-                    if st.button("➕ Adicionar à Múltipla", key="add_h"):
-                        st.session_state.multiple_bets.append({
-                            'jogo': f"{home_team} vs {away_team}",
-                            'mercado': f'Vitória {home_team}',
-                            'prob': markets['home_win'],
-                            'odd': odd_h,
-                            'ev': ev_h
-                        })
-                        st.success("✅ Adicionado!")
-                        st.rerun()
+                    markets_data.append({
+                        'jogo': f"{home_team} vs {away_team}",
+                        'mercado': f'Vitória {home_team}',
+                        'prob': markets['home_win'],
+                        'odd': odd_h,
+                        'ev': ev_h,
+                        'key': 'h'
+                    })
             
             with col2:
                 st.write("**Empate**")
                 st.write(f"Prob: {markets['draw']*100:.1f}%")
-                odd_d = st.number_input("Odd:", 1.01, value=3.00, step=0.01, key="d")
+                odd_d = st.number_input("Odd:", 1.01, value=3.00, step=0.01, key=f"d_{home_team}_{away_team}")
                 ev_d = calculate_ev(markets['draw'], odd_d)
                 st.metric("EV", f"{ev_d*100:.1f}%", delta="✅" if ev_d > 0 else "")
+                
                 if ev_d > 0:
-                    if st.button("➕ Adicionar à Múltipla", key="add_d"):
-                        st.session_state.multiple_bets.append({
-                            'jogo': f"{home_team} vs {away_team}",
-                            'mercado': 'Empate',
-                            'prob': markets['draw'],
-                            'odd': odd_d,
-                            'ev': ev_d
-                        })
-                        st.success("✅ Adicionado!")
-                        st.rerun()
+                    markets_data.append({
+                        'jogo': f"{home_team} vs {away_team}",
+                        'mercado': 'Empate',
+                        'prob': markets['draw'],
+                        'odd': odd_d,
+                        'ev': ev_d,
+                        'key': 'd'
+                    })
             
             with col3:
                 st.write(f"**{away_team}**")
                 st.write(f"Prob: {markets['away_win']*100:.1f}%")
-                odd_a = st.number_input("Odd:", 1.01, value=4.00, step=0.01, key="a")
+                odd_a = st.number_input("Odd:", 1.01, value=4.00, step=0.01, key=f"a_{home_team}_{away_team}")
                 ev_a = calculate_ev(markets['away_win'], odd_a)
                 st.metric("EV", f"{ev_a*100:.1f}%", delta="✅" if ev_a > 0 else "")
+                
                 if ev_a > 0:
-                    if st.button("➕ Adicionar à Múltipla", key="add_a"):
-                        st.session_state.multiple_bets.append({
-                            'jogo': f"{home_team} vs {away_team}",
-                            'mercado': f'Vitória {away_team}',
-                            'prob': markets['away_win'],
-                            'odd': odd_a,
-                            'ev': ev_a
-                        })
-                        st.success("✅ Adicionado!")
-                        st.rerun()
+                    markets_data.append({
+                        'jogo': f"{home_team} vs {away_team}",
+                        'mercado': f'Vitória {away_team}',
+                        'prob': markets['away_win'],
+                        'odd': odd_a,
+                        'ev': ev_a,
+                        'key': 'a'
+                    })
             
             # Over/Under
             st.write("**Over/Under 2.5 Gols:**")
@@ -201,45 +201,57 @@ if home_team != away_team:
             with col1:
                 st.write("**Mais de 2.5**")
                 st.write(f"Prob: {markets['over_2.5']*100:.1f}%")
-                odd_o = st.number_input("Odd:", 1.01, value=2.50, step=0.01, key="o")
+                odd_o = st.number_input("Odd:", 1.01, value=2.50, step=0.01, key=f"o_{home_team}_{away_team}")
                 ev_o = calculate_ev(markets['over_2.5'], odd_o)
                 st.metric("EV", f"{ev_o*100:.1f}%", delta="✅" if ev_o > 0 else "")
+                
                 if ev_o > 0:
-                    if st.button("➕ Adicionar à Múltipla", key="add_o"):
-                        st.session_state.multiple_bets.append({
-                            'jogo': f"{home_team} vs {away_team}",
-                            'mercado': 'Mais de 2.5',
-                            'prob': markets['over_2.5'],
-                            'odd': odd_o,
-                            'ev': ev_o
-                        })
-                        st.success("✅ Adicionado!")
-                        st.rerun()
+                    markets_data.append({
+                        'jogo': f"{home_team} vs {away_team}",
+                        'mercado': 'Mais de 2.5',
+                        'prob': markets['over_2.5'],
+                        'odd': odd_o,
+                        'ev': ev_o,
+                        'key': 'o'
+                    })
             
             with col2:
                 st.write("**Menos de 2.5**")
                 st.write(f"Prob: {markets['under_2.5']*100:.1f}%")
-                odd_u = st.number_input("Odd:", 1.01, value=1.80, step=0.01, key="u")
+                odd_u = st.number_input("Odd:", 1.01, value=1.80, step=0.01, key=f"u_{home_team}_{away_team}")
                 ev_u = calculate_ev(markets['under_2.5'], odd_u)
                 st.metric("EV", f"{ev_u*100:.1f}%", delta="✅" if ev_u > 0 else "")
+                
                 if ev_u > 0:
-                    if st.button("➕ Adicionar à Múltipla", key="add_u"):
-                        st.session_state.multiple_bets.append({
-                            'jogo': f"{home_team} vs {away_team}",
-                            'mercado': 'Menos de 2.5',
-                            'prob': markets['under_2.5'],
-                            'odd': odd_u,
-                            'ev': ev_u
-                        })
-                        st.success("✅ Adicionado!")
-                        st.rerun()
+                    markets_data.append({
+                        'jogo': f"{home_team} vs {away_team}",
+                        'mercado': 'Menos de 2.5',
+                        'prob': markets['under_2.5'],
+                        'odd': odd_u,
+                        'ev': ev_u,
+                        'key': 'u'
+                    })
+            
+            # Botões de adicionar
+            if markets_data:
+                st.divider()
+                st.write("**➕ Adicionar à Múltipla:**")
+                
+                for market in markets_data:
+                    col1, col2 = st.columns([4, 1])
+                    with col1:
+                        st.write(f"{market['mercado']} - Odd {market['odd']:.2f} - EV {market['ev']*100:.1f}%")
+                    with col2:
+                        if st.button("Adicionar", key=f"add_{market['key']}_{home_team}_{away_team}"):
+                            st.session_state.multiple_bets.append(market)
+                            st.success("✅")
 
 # --- SEÇÃO 2: MÚLTIPLA ---
 st.divider()
-st.header("🎰 Monte sua Múltipla")
+st.header("🎰 Sua Múltipla")
 
 if len(st.session_state.multiple_bets) > 0:
-    st.success(f"✅ {len(st.session_state.multiple_bets)} apostas selecionadas")
+    st.success(f"✅ {len(st.session_state.multiple_bets)} apostas")
     
     # Mostrar apostas
     for idx, bet in enumerate(st.session_state.multiple_bets):
@@ -249,9 +261,9 @@ if len(st.session_state.multiple_bets) > 0:
         with col2:
             st.write(bet['mercado'])
         with col3:
-            st.write(f"Odd: {bet['odd']:.2f}")
+            st.write(f"{bet['odd']:.2f}")
         with col4:
-            st.write(f"EV: {bet['ev']*100:.1f}%")
+            st.write(f"{bet['ev']*100:.1f}%")
         with col5:
             if st.button("🗑️", key=f"del_{idx}"):
                 st.session_state.multiple_bets.pop(idx)
@@ -270,80 +282,36 @@ if len(st.session_state.multiple_bets) > 0:
     
     col1, col2, col3 = st.columns(3)
     with col1:
-        st.metric("Odd Total da Múltipla", f"{odd_total:.2f}")
+        st.metric("Odd Total", f"{odd_total:.2f}")
     with col2:
-        st.metric("Probabilidade Combinada", f"{prob_total*100:.2f}%")
+        st.metric("Prob. Combinada", f"{prob_total*100:.2f}%")
     with col3:
-        st.metric("EV da Múltipla", f"{ev_multiple*100:.1f}%", delta="✅ EV+" if ev_multiple > 0 else "❌ EV-")
+        st.metric("EV Múltipla", f"{ev_multiple*100:.1f}%", delta="✅" if ev_multiple > 0 else "❌")
     
-    # Gerenciamento de Banca
-    st.subheader("💰 Gerenciamento de Banca")
+    # Gerenciamento
+    st.subheader("💰 Gestão de Banca")
+    stake = st.number_input("Valor (R$):", min_value=1.0, value=100.0, step=10.0)
     
-    stake = st.number_input("💵 Valor a Apostar (R$):", min_value=1.0, value=100.0, step=10.0)
-    
-    st.write("**📊 Projeções:**")
-    
-    retorno_win = stake * odd_total
-    lucro_win = retorno_win - stake
+    retorno = stake * odd_total
+    lucro = retorno - stake
     
     col1, col2, col3 = st.columns(3)
     with col1:
         st.metric("Investimento", f"R$ {stake:.2f}")
     with col2:
-        st.metric("Retorno se Ganhar", f"R$ {retorno_win:.2f}", delta=f"+{lucro_win:.2f}")
+        st.metric("Retorno se Ganhar", f"R$ {retorno:.2f}")
     with col3:
-        st.metric("Retorno Esperado (EV)", f"R$ {stake * (1 + ev_multiple):.2f}", 
-                  delta=f"{'+' if ev_multiple > 0 else ''}{stake * ev_multiple:.2f}")
+        st.metric("Lucro", f"R$ {lucro:.2f}", delta=f"+{lucro:.2f}")
     
-    # Estratégia de Divisão
-    st.subheader("📋 Estratégia: Divisão por Kelly Criterion")
-    
-    kelly_fractions = []
-    total_kelly = 0
-    
-    for bet in st.session_state.multiple_bets:
-        # Kelly simplificado: (prob * odd - 1) / (odd - 1)
-        kelly = (bet['prob'] * bet['odd'] - 1) / (bet['odd'] - 1)
-        kelly = max(0, min(kelly, 0.25))  # Limitar entre 0% e 25% da banca
-        kelly_fractions.append(kelly)
-        total_kelly += kelly
-    
-    if total_kelly > 0:
-        st.write("**Sugestão de Distribuição (baseada em Kelly):**")
-        
-        for idx, bet in enumerate(st.session_state.multiple_bets):
-            kelly_pct = (kelly_fractions[idx] / total_kelly) * 100 if total_kelly > 0 else 0
-            valor_sugerido = stake * (kelly_fractions[idx] / total_kelly) if total_kelly > 0 else 0
-            
-            st.write(f"**{bet['mercado']}** ({bet['jogo']}): R$ {valor_sugerido:.2f} ({kelly_pct:.1f}%)")
-    
-    # Botões de ação
     col1, col2 = st.columns(2)
     with col1:
-        if st.button("🗑️ Limpar Múltipla", type="secondary", use_container_width=True):
+        if st.button("🗑️ Limpar Tudo", use_container_width=True):
             st.session_state.multiple_bets = []
             st.rerun()
     with col2:
-        if st.button("💾 Salvar Múltipla", type="primary", use_container_width=True):
-            # Criar DataFrame para download
-            df_multiple = pd.DataFrame([
-                {
-                    'Jogo': bet['jogo'],
-                    'Mercado': bet['mercado'],
-                    'Odd': bet['odd'],
-                    'Probabilidade': f"{bet['prob']*100:.1f}%",
-                    'EV': f"{bet['ev']*100:.1f}%"
-                }
-                for bet in st.session_state.multiple_bets
-            ])
-            
-            csv = df_multiple.to_csv(index=False)
-            st.download_button(
-                label="📥 Baixar CSV",
-                data=csv,
-                file_name="multipla_ev.csv",
-                mime="text/csv"
-            )
+        df = pd.DataFrame(st.session_state.multiple_bets)
+        csv = df.to_csv(index=False)
+        st.download_button("💾 Baixar CSV", csv, "multipla.csv", "text/csv", use_container_width=True)
 
 else:
-    st.info("👆 Analise jogos acima e adicione apostas com EV+ à múltipla")
+    st.info("👆 Analise jogos e adicione apostas EV+")
