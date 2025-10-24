@@ -118,6 +118,38 @@ def get_season_results():
             continue
     return None, "Erro ao carregar dados", None
 
+def get_latest_matchday_games(events, limit=10):
+    """Retorna os últimos jogos da rodada mais recente"""
+    games_with_date = []
+    
+    for event in events:
+        if event.get('dateEvent') and event.get('strTime'):
+            try:
+                match_datetime_str = f"{event['dateEvent']} {event['strTime']}"
+                match_datetime = datetime.strptime(match_datetime_str, "%Y-%m-%d %H:%M:%S")
+                
+                games_with_date.append({
+                    'date': event['dateEvent'],
+                    'time': event['strTime'],
+                    'home': event['strHomeTeam'],
+                    'away': event['strAwayTeam'],
+                    'datetime': match_datetime,
+                    'home_score': event.get('intHomeScore', '0'),
+                    'away_score': event.get('intAwayScore', '0')
+                })
+            except:
+                continue
+    
+    if not games_with_date:
+        return []
+    
+    games_with_date.sort(key=lambda x: x['datetime'], reverse=True)
+    
+    latest_date = games_with_date[0]['date']
+    latest_games = [game for game in games_with_date if game['date'] == latest_date]
+    
+    return latest_games[:limit]
+
 def process_team_stats(events, team_name, venue='home'):
     """Processa estatísticas de um time"""
     games = []
@@ -180,105 +212,33 @@ for event in events:
 
 team_list = sorted(list(teams))
 
-# ==================== SEÇÃO DEBUG: PRÓXIMOS JOGOS ====================
+# ==================== SEÇÃO 0: ÚLTIMA RODADA ====================
 
-st.header("🔍 DEBUG - Análise de Próximos Jogos")
+latest_games = get_latest_matchday_games(events, limit=10)
 
-now = datetime.now()
-st.write(f"**Data/Hora Atual:** {now.strftime('%Y-%m-%d %H:%M:%S')}")
-st.write(f"**Total de eventos na API:** {len(events)}")
-
-total_events = len(events)
-events_with_score = 0
-events_without_score = 0
-future_events = 0
-past_events = 0
-events_with_date = 0
-events_without_date = 0
-
-debug_data = []
-
-for event in events:
-    has_date = bool(event.get('dateEvent') and event.get('strTime'))
-    has_score = bool(event.get('intHomeScore') and event.get('intAwayScore'))
+if latest_games:
+    match_date = datetime.strptime(latest_games[0]['date'], "%Y-%m-%d")
     
-    if has_date:
-        events_with_date += 1
-        try:
-            match_datetime_str = f"{event['dateEvent']} {event['strTime']}"
-            match_datetime = datetime.strptime(match_datetime_str, "%Y-%m-%d %H:%M:%S")
-            
-            is_future = match_datetime > now
-            
-            if is_future:
-                future_events += 1
-            else:
-                past_events += 1
-            
-            if is_future and not has_score:
-                debug_data.append({
-                    'Data': event['dateEvent'],
-                    'Hora': event['strTime'][:5],
-                    'Casa': event.get('strHomeTeam', 'N/A'),
-                    'Visitante': event.get('strAwayTeam', 'N/A'),
-                    'Placar Casa': event.get('intHomeScore', 'VAZIO'),
-                    'Placar Visitante': event.get('intAwayScore', 'VAZIO'),
-                    'DateTime': match_datetime.strftime('%Y-%m-%d %H:%M')
-                })
-        except Exception as e:
-            st.error(f"Erro ao processar data: {e}")
-    else:
-        events_without_date += 1
+    st.header(f"📅 Última Rodada - {match_date.strftime('%d/%m/%Y')}")
+    st.caption(f"⚽ {len(latest_games)} jogos | Clique em 'Analisar' para simular o confronto")
     
-    if has_score:
-        events_with_score += 1
-    else:
-        events_without_score += 1
-
-col1, col2, col3, col4 = st.columns(4)
-with col1:
-    st.metric("Total de Eventos", total_events)
-with col2:
-    st.metric("Com Data/Hora", events_with_date)
-with col3:
-    st.metric("Jogos Futuros", future_events)
-with col4:
-    st.metric("Jogos Passados", past_events)
-
-col1, col2, col3 = st.columns(3)
-with col1:
-    st.metric("Com Placar", events_with_score)
-with col2:
-    st.metric("Sem Placar", events_without_score)
-with col3:
-    st.metric("Sem Data", events_without_date)
-
-if debug_data:
-    st.success(f"✅ **{len(debug_data)} jogos futuros encontrados!**")
-    df_debug = pd.DataFrame(debug_data)
-    st.dataframe(df_debug, use_container_width=True)
-else:
-    st.warning("⚠️ **Nenhum jogo futuro encontrado!**")
-    st.info("Isso significa que:")
-    st.write("1. Todos os jogos da temporada já aconteceram OU")
-    st.write("2. A API não retorna jogos futuros OU")
-    st.write("3. Os jogos futuros têm placares preenchidos")
-
-st.subheader("📋 Amostra de 5 Eventos da API")
-sample_events = events[:5]
-for idx, event in enumerate(sample_events):
-    with st.expander(f"Evento {idx+1}: {event.get('strHomeTeam', 'N/A')} vs {event.get('strAwayTeam', 'N/A')}"):
-        st.json({
-            'dateEvent': event.get('dateEvent'),
-            'strTime': event.get('strTime'),
-            'strHomeTeam': event.get('strHomeTeam'),
-            'strAwayTeam': event.get('strAwayTeam'),
-            'intHomeScore': event.get('intHomeScore'),
-            'intAwayScore': event.get('intAwayScore'),
-            'strStatus': event.get('strStatus')
-        })
-
-st.divider()
+    for game in latest_games:
+        column_match, column_score, column_button = st.columns([3, 1, 1])
+        
+        with column_match:
+            st.write(f"🏠 **{game['home']}** vs ✈️ **{game['away']}**")
+        
+        with column_score:
+            st.write(f"**{game['home_score']} x {game['away_score']}**")
+        
+        with column_button:
+            if st.button("🔍", key=f"analyze_{game['home']}_{game['away']}", help="Analisar confronto", use_container_width=True):
+                st.session_state.selected_home = game['home']
+                st.session_state.selected_away = game['away']
+                st.session_state.show_analysis = True
+                st.rerun()
+    
+    st.divider()
 
 # ==================== SEÇÃO 1: ANÁLISE DE JOGO ====================
 
