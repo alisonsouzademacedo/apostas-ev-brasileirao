@@ -2,19 +2,13 @@ import streamlit as st
 import pandas as pd
 import requests
 import math
-from datetime import datetime
 
-st.set_page_config(
-    page_title="Sistema EV+ - Brasileirão 2025",
-    page_icon="⚽",
-    layout="wide"
-)
-
+st.set_page_config(page_title="Sistema EV+ - Brasileirão 2025", page_icon="⚽", layout="wide")
 st.title('⚽ Sistema de Análise de Valor (EV+) - Brasileirão 2025')
 
-# --- API TheSportsDB (GRATUITA) ---
+# --- API TheSportsDB ---
 API_BASE = "https://www.thesportsdb.com/api/v1/json/3"
-LEAGUE_ID = "4351"  # Brasileirão Série A
+LEAGUE_ID = "4351"
 
 # --- FUNÇÕES MATEMÁTICAS ---
 def poisson_probability(k, lambda_value):
@@ -47,63 +41,92 @@ def calculate_ev(prob, odd):
 # --- FUNÇÕES DA API ---
 @st.cache_data(ttl=3600)
 def get_season_results():
-    """Busca TODOS os resultados da temporada 2025"""
-    url = f"{API_BASE}/eventsseason.php?id={LEAGUE_ID}&s=2024-2025"
-    try:
-        response = requests.get(url, timeout=10)
-        if response.status_code == 200:
-            data = response.json()
-            if data and data.get('events'):
-                return data['events'], None
-        return None, "Sem dados"
-    except Exception as e:
-        return None, str(e)
+    """Busca resultados da temporada 2025"""
+    # Tentar diferentes formatos de season
+    season_formats = ["2025", "2024-2025", "2024/2025"]
+    
+    for season in season_formats:
+        url = f"{API_BASE}/eventsseason.php?id={LEAGUE_ID}&s={season}"
+        try:
+            response = requests.get(url, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                if data and data.get('events') and len(data['events']) > 0:
+                    return data['events'], None, season
+        except:
+            continue
+    
+    return None, "Nenhum formato de temporada funcionou", None
 
 def process_team_stats(events, team_name, venue='home'):
     """Processa estatísticas de um time"""
     games = []
     
     for event in events:
-        if event.get('intHomeScore') is None or event.get('intAwayScore') is None:
+        # Verificar se o jogo já aconteceu
+        if not event.get('intHomeScore') or not event.get('intAwayScore'):
             continue
-            
-        if venue == 'home' and event['strHomeTeam'] == team_name:
-            games.append({
-                'scored': int(event['intHomeScore']),
-                'conceded': int(event['intAwayScore'])
-            })
-        elif venue == 'away' and event['strAwayTeam'] == team_name:
-            games.append({
-                'scored': int(event['intAwayScore']),
-                'conceded': int(event['intHomeScore'])
-            })
+        
+        try:
+            if venue == 'home' and event.get('strHomeTeam') == team_name:
+                games.append({
+                    'scored': int(event['intHomeScore']),
+                    'conceded': int(event['intAwayScore'])
+                })
+            elif venue == 'away' and event.get('strAwayTeam') == team_name:
+                games.append({
+                    'scored': int(event['intAwayScore']),
+                    'conceded': int(event['intHomeScore'])
+                })
+        except:
+            continue
     
     if not games:
         return None
     
-    scored_avg = sum(g['scored'] for g in games) / len(games)
-    conceded_avg = sum(g['conceded'] for g in games) / len(games)
-    
     return {
         'games': len(games),
-        'scored_avg': scored_avg,
-        'conceded_avg': conceded_avg
+        'scored_avg': sum(g['scored'] for g in games) / len(games),
+        'conceded_avg': sum(g['conceded'] for g in games) / len(games)
     }
 
 # --- INTERFACE ---
 st.header("⚽ Selecione o Confronto")
 
-# Carregar dados
-with st.spinner("🔄 Carregando dados da temporada 2025..."):
-    events, error = get_season_results()
+with st.spinner("🔄 Carregando dados..."):
+    events, error, season_used = get_season_results()
 
 if error or not events:
-    st.error(f"❌ Erro ao carregar dados: {error}")
+    st.error(f"❌ Erro: {error}")
+    
+    # DEBUG
+    with st.expander("🔧 Informações de Debug"):
+        st.write("Tentando buscar dados da API TheSportsDB...")
+        st.write(f"League ID: {LEAGUE_ID}")
+        st.write("Formatos de temporada tentados: 2025, 2024-2025, 2024/2025")
+        
+        # Teste manual
+        test_url = f"{API_BASE}/eventsseason.php?id={LEAGUE_ID}&s=2024-2025"
+        st.write(f"**URL de teste:** {test_url}")
+        
+        try:
+            test_response = requests.get(test_url, timeout=10)
+            st.write(f"**Status:** {test_response.status_code}")
+            if test_response.status_code == 200:
+                test_data = test_response.json()
+                st.json(test_data)
+        except Exception as e:
+            st.write(f"Erro: {str(e)}")
+    
     st.stop()
 
-# Extrair lista de times únicos
+# Extrair times
 teams = set()
+completed_games = 0
+
 for event in events:
+    if event.get('intHomeScore') and event.get('intAwayScore'):
+        completed_games += 1
     if event.get('strHomeTeam'):
         teams.add(event['strHomeTeam'])
     if event.get('strAwayTeam'):
@@ -115,7 +138,7 @@ if not team_list:
     st.error("Nenhum time encontrado")
     st.stop()
 
-st.success(f"✅ {len(events)} jogos carregados | {len(team_list)} times")
+st.success(f"✅ {completed_games} jogos completos | {len(team_list)} times | Temporada: {season_used}")
 
 col1, col2 = st.columns(2)
 
@@ -135,35 +158,32 @@ if analyze_btn:
     st.divider()
     st.success(f"Analisando: **{home_team}** vs **{away_team}**")
     
-    # Processar estatísticas
     home_stats = process_team_stats(events, home_team, 'home')
     away_stats = process_team_stats(events, away_team, 'away')
     
     if not home_stats or not away_stats:
-        st.error("❌ Dados insuficientes para análise")
+        st.error("❌ Dados insuficientes")
+        st.info(f"Jogos de {home_team} em casa: {home_stats['games'] if home_stats else 0}")
+        st.info(f"Jogos de {away_team} fora: {away_stats['games'] if away_stats else 0}")
         st.stop()
     
-    # Calcular gols esperados
     exp_home = (home_stats['scored_avg'] + away_stats['conceded_avg']) / 2
     exp_away = (away_stats['scored_avg'] + home_stats['conceded_avg']) / 2
     
-    # --- ESTATÍSTICAS ---
-    st.header("📊 Estatísticas Temporada 2025")
+    st.header("📊 Estatísticas")
     
     col1, col2, col3 = st.columns(3)
     with col1:
-        st.metric(f"Gols Esperados - {home_team}", f"{exp_home:.2f}", help=f"Baseado em {home_stats['games']} jogos em casa")
+        st.metric(f"{home_team}", f"{exp_home:.2f} gols", help=f"{home_stats['games']} jogos em casa")
     with col2:
-        st.metric(f"Gols Esperados - {away_team}", f"{exp_away:.2f}", help=f"Baseado em {away_stats['games']} jogos fora")
+        st.metric(f"{away_team}", f"{exp_away:.2f} gols", help=f"{away_stats['games']} jogos fora")
     with col3:
-        st.metric("Total Esperado", f"{exp_home + exp_away:.2f}")
+        st.metric("Total", f"{exp_home + exp_away:.2f} gols")
     
-    # Calcular probabilidades
     prob_matrix = calculate_match_probabilities(exp_home, exp_away)
     markets = calculate_markets(prob_matrix)
     
-    # --- ANÁLISE DE VALOR ---
-    st.header("🎯 Análise de Valor (EV+)")
+    st.header("🎯 Análise de Valor")
     
     positive_bets = []
     
@@ -172,17 +192,17 @@ if analyze_btn:
     
     with col1:
         st.write(f"**{home_team}**")
-        st.write(f"Prob: **{markets['home_win']*100:.1f}%**")
-        odd_h = st.number_input("Odd:", min_value=1.01, value=2.00, step=0.01, key="h")
+        st.write(f"**{markets['home_win']*100:.1f}%**")
+        odd_h = st.number_input("Odd:", 1.01, value=2.00, step=0.01, key="h")
         ev_h = calculate_ev(markets['home_win'], odd_h)
         st.metric("EV", f"{ev_h*100:.1f}%", delta="✅" if ev_h > 0 else "❌")
         if ev_h > 0:
-            positive_bets.append({'Mercado': f'Vitória {home_team}', 'Prob': f"{markets['home_win']*100:.1f}%", 'Odd': odd_h, 'EV': f"{ev_h*100:.1f}%"})
+            positive_bets.append({'Mercado': f'{home_team}', 'Prob': f"{markets['home_win']*100:.1f}%", 'Odd': odd_h, 'EV': f"{ev_h*100:.1f}%"})
     
     with col2:
         st.write("**Empate**")
-        st.write(f"Prob: **{markets['draw']*100:.1f}%**")
-        odd_d = st.number_input("Odd:", min_value=1.01, value=3.00, step=0.01, key="d")
+        st.write(f"**{markets['draw']*100:.1f}%**")
+        odd_d = st.number_input("Odd:", 1.01, value=3.00, step=0.01, key="d")
         ev_d = calculate_ev(markets['draw'], odd_d)
         st.metric("EV", f"{ev_d*100:.1f}%", delta="✅" if ev_d > 0 else "❌")
         if ev_d > 0:
@@ -190,46 +210,43 @@ if analyze_btn:
     
     with col3:
         st.write(f"**{away_team}**")
-        st.write(f"Prob: **{markets['away_win']*100:.1f}%**")
-        odd_a = st.number_input("Odd:", min_value=1.01, value=4.00, step=0.01, key="a")
+        st.write(f"**{markets['away_win']*100:.1f}%**")
+        odd_a = st.number_input("Odd:", 1.01, value=4.00, step=0.01, key="a")
         ev_a = calculate_ev(markets['away_win'], odd_a)
         st.metric("EV", f"{ev_a*100:.1f}%", delta="✅" if ev_a > 0 else "❌")
         if ev_a > 0:
-            positive_bets.append({'Mercado': f'Vitória {away_team}', 'Prob': f"{markets['away_win']*100:.1f}%", 'Odd': odd_a, 'EV': f"{ev_a*100:.1f}%"})
-    
-    st.divider()
+            positive_bets.append({'Mercado': f'{away_team}', 'Prob': f"{markets['away_win']*100:.1f}%", 'Odd': odd_a, 'EV': f"{ev_a*100:.1f}%"})
     
     st.subheader("Over/Under 2.5")
     col1, col2 = st.columns(2)
     
     with col1:
         st.write("**Mais de 2.5**")
-        st.write(f"Prob: **{markets['over_2.5']*100:.1f}%**")
-        odd_o = st.number_input("Odd:", min_value=1.01, value=2.50, step=0.01, key="o")
+        st.write(f"**{markets['over_2.5']*100:.1f}%**")
+        odd_o = st.number_input("Odd:", 1.01, value=2.50, step=0.01, key="o")
         ev_o = calculate_ev(markets['over_2.5'], odd_o)
         st.metric("EV", f"{ev_o*100:.1f}%", delta="✅" if ev_o > 0 else "❌")
         if ev_o > 0:
-            positive_bets.append({'Mercado': 'Mais de 2.5', 'Prob': f"{markets['over_2.5']*100:.1f}%", 'Odd': odd_o, 'EV': f"{ev_o*100:.1f}%"})
+            positive_bets.append({'Mercado': '+ 2.5', 'Prob': f"{markets['over_2.5']*100:.1f}%", 'Odd': odd_o, 'EV': f"{ev_o*100:.1f}%"})
     
     with col2:
         st.write("**Menos de 2.5**")
-        st.write(f"Prob: **{markets['under_2.5']*100:.1f}%**")
-        odd_u = st.number_input("Odd:", min_value=1.01, value=1.80, step=0.01, key="u")
+        st.write(f"**{markets['under_2.5']*100:.1f}%**")
+        odd_u = st.number_input("Odd:", 1.01, value=1.80, step=0.01, key="u")
         ev_u = calculate_ev(markets['under_2.5'], odd_u)
         st.metric("EV", f"{ev_u*100:.1f}%", delta="✅" if ev_u > 0 else "❌")
         if ev_u > 0:
-            positive_bets.append({'Mercado': 'Menos de 2.5', 'Prob': f"{markets['under_2.5']*100:.1f}%", 'Odd': odd_u, 'EV': f"{ev_u*100:.1f}%"})
+            positive_bets.append({'Mercado': '- 2.5', 'Prob': f"{markets['under_2.5']*100:.1f}%", 'Odd': odd_u, 'EV': f"{ev_u*100:.1f}%"})
     
-    # --- RESULTADO ---
-    st.header("🏆 Apostas com EV+")
+    st.header("🏆 Apostas EV+")
     
     if positive_bets:
         sorted_bets = sorted(positive_bets, key=lambda x: float(x['EV'].replace('%', '')), reverse=True)
         df = pd.DataFrame(sorted_bets)
-        st.success(f"✅ {len(positive_bets)} apostas com valor positivo")
+        st.success(f"✅ {len(positive_bets)} apostas")
         st.dataframe(df, use_container_width=True, hide_index=True)
     else:
-        st.warning("⚠️ Nenhuma aposta com EV+")
+        st.warning("⚠️ Nenhuma aposta EV+")
 
 else:
-    st.info("👆 Selecione os times e clique em ANALISAR")
+    st.info("👆 Selecione e clique em ANALISAR")
