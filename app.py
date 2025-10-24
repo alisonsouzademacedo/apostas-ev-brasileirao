@@ -102,6 +102,8 @@ def calculate_bankroll_distribution(total_bankroll, bets, risk_profile="balanced
 API_BASE = "https://www.thesportsdb.com/api/v1/json/3"
 LEAGUE_ID = "4351"
 
+API_FUTEBOL_BR = "https://api.api-futebol.com.br/v1"
+
 @st.cache_data(ttl=3600)
 def get_season_results():
     """Busca todos os resultados da temporada"""
@@ -118,37 +120,56 @@ def get_season_results():
             continue
     return None, "Erro ao carregar dados", None
 
-def get_latest_matchday_games(events, limit=10):
-    """Retorna os últimos jogos da rodada mais recente"""
-    games_with_date = []
-    
-    for event in events:
-        if event.get('dateEvent') and event.get('strTime'):
-            try:
-                match_datetime_str = f"{event['dateEvent']} {event['strTime']}"
-                match_datetime = datetime.strptime(match_datetime_str, "%Y-%m-%d %H:%M:%S")
-                
-                games_with_date.append({
-                    'date': event['dateEvent'],
-                    'time': event['strTime'],
-                    'home': event['strHomeTeam'],
-                    'away': event['strAwayTeam'],
-                    'datetime': match_datetime,
-                    'home_score': event.get('intHomeScore', '0'),
-                    'away_score': event.get('intAwayScore', '0')
-                })
-            except:
-                continue
-    
-    if not games_with_date:
+@st.cache_data(ttl=1800)
+def get_next_round_games():
+    """Busca próximos jogos da rodada atual via API Futebol BR"""
+    try:
+        url = f"{API_FUTEBOL_BR}/campeonatos/10/rodadas"
+        headers = {
+            "Authorization": "Bearer test_1234567890abcdef"
+        }
+        response = requests.get(url, headers=headers, timeout=10)
+        
+        if response.status_code == 200:
+            data = response.json()
+            
+            if not data:
+                return []
+            
+            now = datetime.now()
+            future_games = []
+            
+            for rodada in data:
+                if rodada.get('partidas'):
+                    for partida in rodada['partidas']:
+                        if partida.get('data_realizacao'):
+                            try:
+                                game_datetime = datetime.fromisoformat(partida['data_realizacao'].replace('Z', '+00:00'))
+                                
+                                if game_datetime > now and not partida.get('placar'):
+                                    future_games.append({
+                                        'datetime': game_datetime,
+                                        'date': game_datetime.strftime('%Y-%m-%d'),
+                                        'time': game_datetime.strftime('%H:%M'),
+                                        'home': partida.get('time_mandante', {}).get('nome_popular', 'N/A'),
+                                        'away': partida.get('time_visitante', {}).get('nome_popular', 'N/A'),
+                                        'round': rodada.get('nome', 'Rodada')
+                                    })
+                            except:
+                                continue
+            
+            if not future_games:
+                return []
+            
+            future_games.sort(key=lambda x: x['datetime'])
+            next_date = future_games[0]['date']
+            next_day_games = [game for game in future_games if game['date'] == next_date]
+            
+            return next_day_games[:10]
+            
+    except Exception as e:
+        st.warning(f"API Futebol BR indisponível: {e}")
         return []
-    
-    games_with_date.sort(key=lambda x: x['datetime'], reverse=True)
-    
-    latest_date = games_with_date[0]['date']
-    latest_games = [game for game in games_with_date if game['date'] == latest_date]
-    
-    return latest_games[:limit]
 
 def process_team_stats(events, team_name, venue='home'):
     """Processa estatísticas de um time"""
@@ -212,24 +233,34 @@ for event in events:
 
 team_list = sorted(list(teams))
 
-# ==================== SEÇÃO 0: ÚLTIMA RODADA ====================
+# ==================== SEÇÃO 0: PRÓXIMOS JOGOS ====================
 
-latest_games = get_latest_matchday_games(events, limit=10)
+next_round_games = get_next_round_games()
 
-if latest_games:
-    match_date = datetime.strptime(latest_games[0]['date'], "%Y-%m-%d")
+if next_round_games:
+    match_date = datetime.strptime(next_round_games[0]['date'], "%Y-%m-%d")
+    weekday_names = {
+        0: "Segunda-feira",
+        1: "Terça-feira",
+        2: "Quarta-feira",
+        3: "Quinta-feira",
+        4: "Sexta-feira",
+        5: "Sábado",
+        6: "Domingo"
+    }
+    weekday = weekday_names[match_date.weekday()]
     
-    st.header(f"📅 Última Rodada - {match_date.strftime('%d/%m/%Y')}")
-    st.caption(f"⚽ {len(latest_games)} jogos | Clique em 'Analisar' para simular o confronto")
+    st.header(f"📅 Próximos Jogos - {weekday}, {match_date.strftime('%d/%m/%Y')}")
+    st.caption(f"⚽ {len(next_round_games)} jogos agendados | {next_round_games[0].get('round', 'Rodada')}")
     
-    for game in latest_games:
-        column_match, column_score, column_button = st.columns([3, 1, 1])
+    for game in next_round_games:
+        column_time, column_match, column_button = st.columns([1, 4, 1])
+        
+        with column_time:
+            st.write(f"**{game['time']}**")
         
         with column_match:
             st.write(f"🏠 **{game['home']}** vs ✈️ **{game['away']}**")
-        
-        with column_score:
-            st.write(f"**{game['home_score']} x {game['away_score']}**")
         
         with column_button:
             if st.button("🔍", key=f"analyze_{game['home']}_{game['away']}", help="Analisar confronto", use_container_width=True):
@@ -514,7 +545,7 @@ if home_team != away_team:
                             st.session_state.multiple_bets.append(market)
                             st.success("✅")
 
-# ==================== SEÇÃO 2: GESTÃO DE BANCA INTELIGENTE ====================
+# ==================== SEÇÃO 2: GESTÃO DE BANCA ====================
 
 st.divider()
 st.header("💰 Gestão de Banca Inteligente")
