@@ -39,7 +39,57 @@ def calculate_kelly_criterion(probability, odd):
     if odd <= 1:
         return 0
     kelly = (probability * odd - 1) / (odd - 1)
-    return max(0, min(kelly, 0.25))  # Limita a 25% da banca (Kelly conservador)
+    return max(0, min(kelly, 0.25))
+
+def classify_bet(probability, odd, ev):
+    """Classifica a aposta em categorias"""
+    if ev >= 0.10 and probability >= 0.40 and 1.50 <= odd <= 4.00:
+        return "simple_high"  # Aposta simples com alto valor
+    elif ev >= 0.15 and odd >= 5.00:
+        return "high_risk"  # High-risk / Tiro alto
+    elif 0.05 <= ev <= 0.15 and probability >= 0.30:
+        return "multiple"  # Boa para múltipla
+    elif ev > 0:
+        return "simple_low"  # Aposta simples com valor baixo
+    else:
+        return "no_value"  # Sem valor
+
+def calculate_bankroll_distribution(total_bankroll, bets, risk_profile="balanced"):
+    """Calcula distribuição da banca baseada no perfil de risco"""
+    
+    # Classificar apostas
+    simple_high_bets = [bet for bet in bets if classify_bet(bet['prob'], bet['odd'], bet['ev']) == "simple_high"]
+    multiple_bets = [bet for bet in bets if classify_bet(bet['prob'], bet['odd'], bet['ev']) == "multiple"]
+    high_risk_bets = [bet for bet in bets if classify_bet(bet['prob'], bet['odd'], bet['ev']) == "high_risk"]
+    simple_low_bets = [bet for bet in bets if classify_bet(bet['prob'], bet['odd'], bet['ev']) == "simple_low"]
+    
+    # Definir percentuais por perfil
+    profiles = {
+        "conservative": {"simple": 0.60, "multiple": 0.30, "high_risk": 0.10},
+        "balanced": {"simple": 0.50, "multiple": 0.35, "high_risk": 0.15},
+        "aggressive": {"simple": 0.40, "multiple": 0.40, "high_risk": 0.20}
+    }
+    
+    profile = profiles[risk_profile]
+    
+    # Calcular valores
+    simple_budget = total_bankroll * profile["simple"]
+    multiple_budget = total_bankroll * profile["multiple"]
+    high_risk_budget = total_bankroll * profile["high_risk"]
+    
+    recommendations = {
+        "simple_high": simple_high_bets,
+        "simple_low": simple_low_bets,
+        "multiple": multiple_bets,
+        "high_risk": high_risk_bets,
+        "budgets": {
+            "simple_total": simple_budget,
+            "multiple_total": multiple_budget,
+            "high_risk_total": high_risk_budget
+        }
+    }
+    
+    return recommendations
 
 # --- FUNÇÕES DA API ---
 API_BASE = "https://www.thesportsdb.com/api/v1/json/3"
@@ -166,7 +216,18 @@ if home_team != away_team:
                     if odd_home >= 1.01:
                         st.info(f"Odd: **{odd_home:.2f}**")
                         ev_home = calculate_ev(markets['home_win'], odd_home)
-                        st.metric("EV", f"{ev_home*100:.1f}%", delta="✅ Valor!" if ev_home > 0 else "❌")
+                        classification = classify_bet(markets['home_win'], odd_home, ev_home)
+                        
+                        if classification == "simple_high":
+                            st.success(f"EV: +{ev_home*100:.1f}% ⭐ APOSTA SIMPLES")
+                        elif classification == "high_risk":
+                            st.warning(f"EV: +{ev_home*100:.1f}% 🎲 HIGH-RISK")
+                        elif classification == "multiple":
+                            st.info(f"EV: +{ev_home*100:.1f}% 🔗 BOA PARA MÚLTIPLA")
+                        elif ev_home > 0:
+                            st.metric("EV", f"+{ev_home*100:.1f}%", delta="✅")
+                        else:
+                            st.metric("EV", f"{ev_home*100:.1f}%", delta="❌")
                         
                         if ev_home > 0:
                             markets_data.append({
@@ -175,6 +236,7 @@ if home_team != away_team:
                                 'prob': markets['home_win'],
                                 'odd': odd_home,
                                 'ev': ev_home,
+                                'classification': classification,
                                 'key': 'home'
                             })
             
@@ -193,7 +255,18 @@ if home_team != away_team:
                     if odd_draw >= 1.01:
                         st.info(f"Odd: **{odd_draw:.2f}**")
                         ev_draw = calculate_ev(markets['draw'], odd_draw)
-                        st.metric("EV", f"{ev_draw*100:.1f}%", delta="✅ Valor!" if ev_draw > 0 else "❌")
+                        classification = classify_bet(markets['draw'], odd_draw, ev_draw)
+                        
+                        if classification == "simple_high":
+                            st.success(f"EV: +{ev_draw*100:.1f}% ⭐ APOSTA SIMPLES")
+                        elif classification == "high_risk":
+                            st.warning(f"EV: +{ev_draw*100:.1f}% 🎲 HIGH-RISK")
+                        elif classification == "multiple":
+                            st.info(f"EV: +{ev_draw*100:.1f}% 🔗 BOA PARA MÚLTIPLA")
+                        elif ev_draw > 0:
+                            st.metric("EV", f"+{ev_draw*100:.1f}%", delta="✅")
+                        else:
+                            st.metric("EV", f"{ev_draw*100:.1f}%", delta="❌")
                         
                         if ev_draw > 0:
                             markets_data.append({
@@ -202,6 +275,7 @@ if home_team != away_team:
                                 'prob': markets['draw'],
                                 'odd': odd_draw,
                                 'ev': ev_draw,
+                                'classification': classification,
                                 'key': 'draw'
                             })
             
@@ -220,7 +294,18 @@ if home_team != away_team:
                     if odd_away >= 1.01:
                         st.info(f"Odd: **{odd_away:.2f}**")
                         ev_away = calculate_ev(markets['away_win'], odd_away)
-                        st.metric("EV", f"{ev_away*100:.1f}%", delta="✅ Valor!" if ev_away > 0 else "❌")
+                        classification = classify_bet(markets['away_win'], odd_away, ev_away)
+                        
+                        if classification == "simple_high":
+                            st.success(f"EV: +{ev_away*100:.1f}% ⭐ APOSTA SIMPLES")
+                        elif classification == "high_risk":
+                            st.warning(f"EV: +{ev_away*100:.1f}% 🎲 HIGH-RISK")
+                        elif classification == "multiple":
+                            st.info(f"EV: +{ev_away*100:.1f}% 🔗 BOA PARA MÚLTIPLA")
+                        elif ev_away > 0:
+                            st.metric("EV", f"+{ev_away*100:.1f}%", delta="✅")
+                        else:
+                            st.metric("EV", f"{ev_away*100:.1f}%", delta="❌")
                         
                         if ev_away > 0:
                             markets_data.append({
@@ -229,6 +314,7 @@ if home_team != away_team:
                                 'prob': markets['away_win'],
                                 'odd': odd_away,
                                 'ev': ev_away,
+                                'classification': classification,
                                 'key': 'away'
                             })
             
@@ -252,7 +338,18 @@ if home_team != away_team:
                     if odd_over >= 1.01:
                         st.info(f"Odd: **{odd_over:.2f}**")
                         ev_over = calculate_ev(markets['over_2.5'], odd_over)
-                        st.metric("EV", f"{ev_over*100:.1f}%", delta="✅ Valor!" if ev_over > 0 else "❌")
+                        classification = classify_bet(markets['over_2.5'], odd_over, ev_over)
+                        
+                        if classification == "simple_high":
+                            st.success(f"EV: +{ev_over*100:.1f}% ⭐ APOSTA SIMPLES")
+                        elif classification == "high_risk":
+                            st.warning(f"EV: +{ev_over*100:.1f}% 🎲 HIGH-RISK")
+                        elif classification == "multiple":
+                            st.info(f"EV: +{ev_over*100:.1f}% 🔗 BOA PARA MÚLTIPLA")
+                        elif ev_over > 0:
+                            st.metric("EV", f"+{ev_over*100:.1f}%", delta="✅")
+                        else:
+                            st.metric("EV", f"{ev_over*100:.1f}%", delta="❌")
                         
                         if ev_over > 0:
                             markets_data.append({
@@ -261,6 +358,7 @@ if home_team != away_team:
                                 'prob': markets['over_2.5'],
                                 'odd': odd_over,
                                 'ev': ev_over,
+                                'classification': classification,
                                 'key': 'over'
                             })
             
@@ -279,7 +377,18 @@ if home_team != away_team:
                     if odd_under >= 1.01:
                         st.info(f"Odd: **{odd_under:.2f}**")
                         ev_under = calculate_ev(markets['under_2.5'], odd_under)
-                        st.metric("EV", f"{ev_under*100:.1f}%", delta="✅ Valor!" if ev_under > 0 else "❌")
+                        classification = classify_bet(markets['under_2.5'], odd_under, ev_under)
+                        
+                        if classification == "simple_high":
+                            st.success(f"EV: +{ev_under*100:.1f}% ⭐ APOSTA SIMPLES")
+                        elif classification == "high_risk":
+                            st.warning(f"EV: +{ev_under*100:.1f}% 🎲 HIGH-RISK")
+                        elif classification == "multiple":
+                            st.info(f"EV: +{ev_under*100:.1f}% 🔗 BOA PARA MÚLTIPLA")
+                        elif ev_under > 0:
+                            st.metric("EV", f"+{ev_under*100:.1f}%", delta="✅")
+                        else:
+                            st.metric("EV", f"{ev_under*100:.1f}%", delta="❌")
                         
                         if ev_under > 0:
                             markets_data.append({
@@ -288,6 +397,7 @@ if home_team != away_team:
                                 'prob': markets['under_2.5'],
                                 'odd': odd_under,
                                 'ev': ev_under,
+                                'classification': classification,
                                 'key': 'under'
                             })
             
@@ -299,30 +409,169 @@ if home_team != away_team:
                 for market in markets_data:
                     column_market, column_button = st.columns([4, 1])
                     with column_market:
-                        st.write(f"**{market['mercado']}** - Odd {market['odd']:.2f} - EV +{market['ev']*100:.1f}%")
+                        classification_emoji = {
+                            "simple_high": "⭐",
+                            "high_risk": "🎲",
+                            "multiple": "🔗",
+                            "simple_low": "✅"
+                        }
+                        emoji = classification_emoji.get(market['classification'], "")
+                        st.write(f"{emoji} **{market['mercado']}** - Odd {market['odd']:.2f} - EV +{market['ev']*100:.1f}%")
                     with column_button:
-                        if st.button("➕ Adicionar", key=f"add_{market['key']}_{home_team}_{away_team}"):
+                        if st.button("➕", key=f"add_{market['key']}_{home_team}_{away_team}"):
                             st.session_state.multiple_bets.append(market)
                             st.success("✅")
 
-# --- SEÇÃO 2: MÚLTIPLA ---
+# --- SEÇÃO 2: GESTÃO DE BANCA INTELIGENTE ---
 st.divider()
-st.header("🎰 Sua Múltipla")
+st.header("💰 Gestão de Banca Inteligente")
 
 if len(st.session_state.multiple_bets) > 0:
-    st.success(f"✅ {len(st.session_state.multiple_bets)} apostas selecionadas")
     
-    # Mostrar apostas
+    # Input de banca
+    bankroll_input = st.text_input(
+        "💵 Banca Total Disponível (em centavos - ex: 10000 = R$ 100,00):",
+        value="",
+        placeholder="Ex: 10000",
+        help="Valor total que você tem disponível para investir"
+    )
+    
+    if bankroll_input and bankroll_input.isdigit():
+        total_bankroll = float(bankroll_input) / 100
+        
+        st.info(f"**Banca Total: R$ {total_bankroll:.2f}**")
+        
+        # Escolher perfil de risco
+        st.subheader("📈 Escolha seu Perfil de Risco")
+        risk_profile = st.radio(
+            "Perfil:",
+            options=["conservative", "balanced", "aggressive"],
+            format_func=lambda x: {
+                "conservative": "🛡️ Conservador (60% simples, 30% múltiplas, 10% high-risk)",
+                "balanced": "⚖️ Balanceado (50% simples, 35% múltiplas, 15% high-risk)",
+                "aggressive": "🔥 Agressivo (40% simples, 40% múltiplas, 20% high-risk)"
+            }[x],
+            horizontal=True
+        )
+        
+        # Calcular distribuição
+        recommendations = calculate_bankroll_distribution(total_bankroll, st.session_state.multiple_bets, risk_profile)
+        
+        st.divider()
+        
+        # Mostrar recomendações
+        st.markdown("### 🎯 Recomendação de Investimento")
+        
+        # Apostas Simples de Alto Valor
+        if recommendations['simple_high'] or recommendations['simple_low']:
+            st.markdown("#### ⭐ Apostas Simples")
+            simple_budget = recommendations['budgets']['simple_total']
+            all_simple = recommendations['simple_high'] + recommendations['simple_low']
+            
+            if all_simple:
+                st.write(f"**Orçamento: R$ {simple_budget:.2f}**")
+                
+                for bet in all_simple:
+                    kelly = calculate_kelly_criterion(bet['prob'], bet['odd'])
+                    stake = simple_budget * (kelly / sum(calculate_kelly_criterion(b['prob'], b['odd']) for b in all_simple))
+                    
+                    col1, col2, col3 = st.columns([3, 1, 1])
+                    with col1:
+                        st.write(f"**{bet['mercado']}** ({bet['jogo']})")
+                    with col2:
+                        st.write(f"Odd: {bet['odd']:.2f}")
+                    with col3:
+                        st.write(f"**R$ {stake:.2f}**")
+        
+        # Múltiplas
+        if recommendations['multiple']:
+            st.markdown("#### 🔗 Apostas para Múltipla")
+            multiple_budget = recommendations['budgets']['multiple_total']
+            
+            st.write(f"**Orçamento: R$ {multiple_budget:.2f}**")
+            st.caption("💡 Monte uma múltipla com 2-4 dessas apostas")
+            
+            for bet in recommendations['multiple']:
+                col1, col2 = st.columns([4, 1])
+                with col1:
+                    st.write(f"**{bet['mercado']}** - Odd {bet['odd']:.2f} - EV +{bet['ev']*100:.1f}%")
+                with col2:
+                    st.write(f"Prob: {bet['prob']*100:.1f}%")
+            
+            # Exemplo de múltipla
+            if len(recommendations['multiple']) >= 2:
+                example_multiple = recommendations['multiple'][:min(4, len(recommendations['multiple']))]
+                odd_multiple = 1
+                prob_multiple = 1
+                for bet in example_multiple:
+                    odd_multiple *= bet['odd']
+                    prob_multiple *= bet['prob']
+                
+                st.write(f"**Exemplo:** {len(example_multiple)} apostas → Odd {odd_multiple:.2f} → Investir R$ {multiple_budget:.2f}")
+                st.write(f"Retorno potencial: R$ {multiple_budget * odd_multiple:.2f}")
+        
+        # High-Risk
+        if recommendations['high_risk']:
+            st.markdown("#### 🎲 Apostas High-Risk (Tiro Alto)")
+            high_risk_budget = recommendations['budgets']['high_risk_total']
+            
+            st.write(f"**Orçamento: R$ {high_risk_budget:.2f}**")
+            st.caption("⚠️ Alto retorno, mas risco elevado")
+            
+            for bet in recommendations['high_risk']:
+                stake = high_risk_budget / len(recommendations['high_risk'])
+                
+                col1, col2, col3 = st.columns([3, 1, 1])
+                with col1:
+                    st.write(f"**{bet['mercado']}** ({bet['jogo']})")
+                with col2:
+                    st.write(f"Odd: {bet['odd']:.2f}")
+                with col3:
+                    st.write(f"**R$ {stake:.2f}**")
+        
+        st.divider()
+        
+        # Resumo
+        st.markdown("### 📊 Resumo da Estratégia")
+        
+        total_recommended = recommendations['budgets']['simple_total'] + recommendations['budgets']['multiple_total'] + recommendations['budgets']['high_risk_total']
+        
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("Apostas Simples", f"R$ {recommendations['budgets']['simple_total']:.2f}")
+        with col2:
+            st.metric("Múltiplas", f"R$ {recommendations['budgets']['multiple_total']:.2f}")
+        with col3:
+            st.metric("High-Risk", f"R$ {recommendations['budgets']['high_risk_total']:.2f}")
+        with col4:
+            st.metric("Total Investido", f"R$ {total_recommended:.2f}")
+    
+    else:
+        st.info("💡 Insira sua banca total para receber recomendações personalizadas")
+    
+    st.divider()
+    
+    # Mostrar todas as apostas selecionadas
+    st.subheader("📋 Suas Apostas Selecionadas")
+    
     for index, bet in enumerate(st.session_state.multiple_bets):
-        column_game, column_market, column_odd, column_ev, column_delete = st.columns([3, 2, 1, 1, 1])
+        column_game, column_market, column_odd, column_ev, column_class, column_delete = st.columns([2, 2, 1, 1, 1, 1])
         with column_game:
             st.write(f"**{bet['jogo']}**")
         with column_market:
             st.write(bet['mercado'])
         with column_odd:
-            st.write(f"Odd: {bet['odd']:.2f}")
+            st.write(f"{bet['odd']:.2f}")
         with column_ev:
-            st.write(f"EV: +{bet['ev']*100:.1f}%")
+            st.write(f"+{bet['ev']*100:.1f}%")
+        with column_class:
+            classification_labels = {
+                "simple_high": "⭐ Simples",
+                "high_risk": "🎲 High-Risk",
+                "multiple": "🔗 Múltipla",
+                "simple_low": "✅ Simples"
+            }
+            st.write(classification_labels.get(bet.get('classification', 'simple_low'), ""))
         with column_delete:
             if st.button("🗑️", key=f"delete_{index}"):
                 st.session_state.multiple_bets.pop(index)
@@ -330,100 +579,16 @@ if len(st.session_state.multiple_bets) > 0:
     
     st.divider()
     
-    # Calcular múltipla
-    odd_total = 1
-    probability_total = 1
-    for bet in st.session_state.multiple_bets:
-        odd_total *= bet['odd']
-        probability_total *= bet['prob']
-    
-    ev_multiple = calculate_ev(probability_total, odd_total)
-    
-    column_odd_total, column_probability_total, column_ev_total = st.columns(3)
-    with column_odd_total:
-        st.metric("Odd Total da Múltipla", f"{odd_total:.2f}")
-    with column_probability_total:
-        st.metric("Probabilidade Combinada", f"{probability_total*100:.2f}%")
-    with column_ev_total:
-        st.metric("EV da Múltipla", f"{ev_multiple*100:+.1f}%", delta="✅ Valor!" if ev_multiple > 0 else "⚠️ Sem valor")
-    
-    # Gerenciamento
-    st.subheader("💰 Gestão de Banca")
-    
-    stake_input = st.text_input(
-        "💵 Valor Total a Apostar (em centavos - ex: 1000 = R$ 10,00):",
-        value="",
-        placeholder="Ex: 1000"
-    )
-    
-    if stake_input and stake_input.isdigit():
-        stake_total = float(stake_input) / 100
-        
-        st.info(f"**Investimento Total: R$ {stake_total:.2f}**")
-        
-        # Calcular Kelly para cada aposta
-        kelly_values = []
-        total_kelly = 0
-        
-        for bet in st.session_state.multiple_bets:
-            kelly = calculate_kelly_criterion(bet['prob'], bet['odd'])
-            kelly_values.append(kelly)
-            total_kelly += kelly
-        
-        # Distribuir valor proporcionalmente ao Kelly
-        st.markdown("### 📈 Distribuição Recomendada (Kelly Criterion)")
-        st.caption("💡 Distribuição baseada no valor esperado de cada aposta")
-        
-        distribution_data = []
-        
-        for index, bet in enumerate(st.session_state.multiple_bets):
-            if total_kelly > 0:
-                percentage = (kelly_values[index] / total_kelly) * 100
-                recommended_stake = stake_total * (kelly_values[index] / total_kelly)
-            else:
-                percentage = 100 / len(st.session_state.multiple_bets)
-                recommended_stake = stake_total / len(st.session_state.multiple_bets)
-            
-            distribution_data.append({
-                'Jogo': bet['jogo'],
-                'Mercado': bet['mercado'],
-                'Odd': f"{bet['odd']:.2f}",
-                'EV': f"+{bet['ev']*100:.1f}%",
-                'Percentual': f"{percentage:.1f}%",
-                'Valor Sugerido': f"R$ {recommended_stake:.2f}"
-            })
-        
-        dataframe_distribution = pd.DataFrame(distribution_data)
-        st.dataframe(dataframe_distribution, use_container_width=True, hide_index=True)
-        
-        st.divider()
-        
-        # Projeções
-        st.subheader("📊 Projeções")
-        
-        total_return = stake_total * odd_total
-        profit = total_return - stake_total
-        
-        column_stake, column_return, column_profit = st.columns(3)
-        with column_stake:
-            st.metric("Investimento Total", f"R$ {stake_total:.2f}")
-        with column_return:
-            st.metric("Retorno se Ganhar Tudo", f"R$ {total_return:.2f}")
-        with column_profit:
-            st.metric("Lucro Potencial", f"R$ {profit:.2f}", delta=f"+{(profit/stake_total)*100:.1f}%")
-    
-    st.divider()
-    
     column_clear, column_download = st.columns(2)
     with column_clear:
-        if st.button("🗑️ Limpar Múltipla", use_container_width=True):
+        if st.button("🗑️ Limpar Todas", use_container_width=True):
             st.session_state.multiple_bets = []
             st.rerun()
     with column_download:
         dataframe_bets = pd.DataFrame(st.session_state.multiple_bets)
         csv_data = dataframe_bets.to_csv(index=False)
-        st.download_button("💾 Baixar CSV", csv_data, "multipla_ev.csv", "text/csv", use_container_width=True)
+        st.download_button("💾 Baixar CSV", csv_data, "apostas_ev.csv", "text/csv", use_container_width=True)
 
 else:
-    st.info("👆 Analise jogos acima e adicione apostas com EV+ à múltipla")
-    st.caption("💡 Insira as odds digitando apenas números: 225 = 2,25 | 180 = 1,80")
+    st.info("👆 Analise jogos acima e adicione apostas com EV+ para receber recomendações de gestão de banca")
+    st.caption("💡 O sistema classificará automaticamente cada aposta e sugerirá a melhor estratégia")
