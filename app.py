@@ -10,13 +10,11 @@ st.title('⚽ Sistema de Análise de Valor (EV+) - Brasileirão 2025')
 # ==================== FUNÇÕES MATEMÁTICAS ====================
 
 def poisson_probability(k, lambda_value):
-    """Calcula a probabilidade de Poisson"""
     if lambda_value <= 0:
         lambda_value = 0.5
     return (lambda_value ** k * math.exp(-lambda_value)) / math.factorial(k)
 
 def calculate_match_probabilities(home_expected_goals, away_expected_goals, max_goals=7):
-    """Calcula matriz de probabilidades de placares usando Poisson"""
     probability_matrix = []
     for home_goals in range(max_goals + 1):
         for away_goals in range(max_goals + 1):
@@ -29,7 +27,6 @@ def calculate_match_probabilities(home_expected_goals, away_expected_goals, max_
     return probability_matrix
 
 def calculate_markets(probability_matrix):
-    """Calcula probabilidades de mercados de apostas"""
     markets = {}
     markets['home_win'] = sum(p['probability'] for p in probability_matrix if p['home_goals'] > p['away_goals'])
     markets['draw'] = sum(p['probability'] for p in probability_matrix if p['home_goals'] == p['away_goals'])
@@ -41,18 +38,15 @@ def calculate_markets(probability_matrix):
     return markets
 
 def calculate_ev(probability, odd):
-    """Calcula o Valor Esperado (EV)"""
     return (probability * odd) - 1 if odd > 0 else 0
 
 def calculate_kelly_criterion(probability, odd):
-    """Calcula a fração Kelly para uma aposta"""
     if odd <= 1:
         return 0
     kelly = (probability * odd - 1) / (odd - 1)
     return max(0, min(kelly, 0.25))
 
 def classify_bet(probability, odd, ev):
-    """Classifica a aposta em categorias para gestão de banca"""
     if ev >= 0.10 and probability >= 0.40 and 1.50 <= odd <= 4.00:
         return "simple_high"
     elif ev >= 0.15 and odd >= 5.00:
@@ -65,7 +59,6 @@ def classify_bet(probability, odd, ev):
         return "no_value"
 
 def calculate_bankroll_distribution(total_bankroll, bets, risk_profile="balanced"):
-    """Calcula distribuição da banca baseada no perfil de risco"""
     simple_high_bets = [bet for bet in bets if classify_bet(bet['prob'], bet['odd'], bet['ev']) == "simple_high"]
     multiple_bets = [bet for bet in bets if classify_bet(bet['prob'], bet['odd'], bet['ev']) == "multiple"]
     high_risk_bets = [bet for bet in bets if classify_bet(bet['prob'], bet['odd'], bet['ev']) == "high_risk"]
@@ -102,11 +95,8 @@ def calculate_bankroll_distribution(total_bankroll, bets, risk_profile="balanced
 API_BASE = "https://www.thesportsdb.com/api/v1/json/3"
 LEAGUE_ID = "4351"
 
-API_FUTEBOL_BR = "https://api.api-futebol.com.br/v1"
-
 @st.cache_data(ttl=3600)
 def get_season_results():
-    """Busca todos os resultados da temporada"""
     season_formats = ["2025", "2024-2025"]
     for season in season_formats:
         url = f"{API_BASE}/eventsseason.php?id={LEAGUE_ID}&s={season}"
@@ -121,20 +111,36 @@ def get_season_results():
     return None, "Erro ao carregar dados", None
 
 @st.cache_data(ttl=1800)
-def get_next_round_games():
-    """Busca próximos jogos da rodada atual via API Futebol BR"""
+def get_next_round_games_debug():
+    """Busca próximos jogos com DEBUG detalhado"""
+    debug_info = {
+        'status': 'iniciado',
+        'url': '',
+        'status_code': 0,
+        'response_preview': '',
+        'error': None,
+        'games_found': 0
+    }
+    
     try:
-        url = f"{API_FUTEBOL_BR}/campeonatos/10/rodadas"
+        url = "https://api.api-futebol.com.br/v1/campeonatos/10/rodadas"
+        debug_info['url'] = url
+        
         headers = {
-            "Authorization": "Bearer test_1234567890abcdef"
+            "Authorization": "Bearer test_a8c37778328495ac24c5d0d3c3923b"
         }
+        
         response = requests.get(url, headers=headers, timeout=10)
+        debug_info['status_code'] = response.status_code
+        debug_info['response_preview'] = str(response.text)[:500]
         
         if response.status_code == 200:
             data = response.json()
+            debug_info['status'] = 'sucesso'
             
             if not data:
-                return []
+                debug_info['status'] = 'vazio'
+                return [], debug_info
             
             now = datetime.now()
             future_games = []
@@ -144,9 +150,12 @@ def get_next_round_games():
                     for partida in rodada['partidas']:
                         if partida.get('data_realizacao'):
                             try:
-                                game_datetime = datetime.fromisoformat(partida['data_realizacao'].replace('Z', '+00:00'))
+                                game_datetime_str = partida['data_realizacao']
+                                game_datetime = datetime.fromisoformat(game_datetime_str.replace('Z', '+00:00'))
                                 
-                                if game_datetime > now and not partida.get('placar'):
+                                placar = partida.get('placar')
+                                
+                                if game_datetime > now and not placar:
                                     future_games.append({
                                         'datetime': game_datetime,
                                         'date': game_datetime.strftime('%Y-%m-%d'),
@@ -155,24 +164,30 @@ def get_next_round_games():
                                         'away': partida.get('time_visitante', {}).get('nome_popular', 'N/A'),
                                         'round': rodada.get('nome', 'Rodada')
                                     })
-                            except:
+                            except Exception as e:
+                                debug_info['error'] = f"Erro ao processar partida: {str(e)}"
                                 continue
             
+            debug_info['games_found'] = len(future_games)
+            
             if not future_games:
-                return []
+                return [], debug_info
             
             future_games.sort(key=lambda x: x['datetime'])
             next_date = future_games[0]['date']
             next_day_games = [game for game in future_games if game['date'] == next_date]
             
-            return next_day_games[:10]
+            return next_day_games[:10], debug_info
+        else:
+            debug_info['status'] = f'erro_{response.status_code}'
+            return [], debug_info
             
     except Exception as e:
-        st.warning(f"API Futebol BR indisponível: {e}")
-        return []
+        debug_info['status'] = 'exception'
+        debug_info['error'] = str(e)
+        return [], debug_info
 
 def process_team_stats(events, team_name, venue='home'):
-    """Processa estatísticas de um time"""
     games = []
     for event in events:
         if not event.get('intHomeScore') or not event.get('intAwayScore'):
@@ -233,9 +248,29 @@ for event in events:
 
 team_list = sorted(list(teams))
 
-# ==================== SEÇÃO 0: PRÓXIMOS JOGOS ====================
+# ==================== DEBUG: API FUTEBOL BR ====================
 
-next_round_games = get_next_round_games()
+st.header("🔍 DEBUG - API Futebol BR")
+
+next_round_games, debug_info = get_next_round_games_debug()
+
+col1, col2, col3 = st.columns(3)
+with col1:
+    st.metric("Status", debug_info['status'])
+with col2:
+    st.metric("Status Code", debug_info['status_code'])
+with col3:
+    st.metric("Jogos Encontrados", debug_info['games_found'])
+
+with st.expander("📋 Detalhes da Requisição"):
+    st.write(f"**URL:** {debug_info['url']}")
+    st.write(f"**Erro:** {debug_info.get('error', 'Nenhum')}")
+    st.write(f"**Preview da Resposta:**")
+    st.code(debug_info['response_preview'])
+
+st.divider()
+
+# ==================== SEÇÃO 0: PRÓXIMOS JOGOS ====================
 
 if next_round_games:
     match_date = datetime.strptime(next_round_games[0]['date'], "%Y-%m-%d")
