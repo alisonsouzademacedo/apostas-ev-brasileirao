@@ -118,39 +118,6 @@ def get_season_results():
             continue
     return None, "Erro ao carregar dados", None
 
-def get_next_matchday_games(events):
-    """Retorna jogos do próximo dia com partidas"""
-    now = datetime.now()
-    future_games = []
-    
-    for event in events:
-        if not event.get('dateEvent') or not event.get('strTime'):
-            continue
-        
-        try:
-            match_datetime_str = f"{event['dateEvent']} {event['strTime']}"
-            match_datetime = datetime.strptime(match_datetime_str, "%Y-%m-%d %H:%M:%S")
-            
-            if match_datetime > now and not event.get('intHomeScore'):
-                future_games.append({
-                    'date': event['dateEvent'],
-                    'time': event['strTime'],
-                    'home': event['strHomeTeam'],
-                    'away': event['strAwayTeam'],
-                    'datetime': match_datetime
-                })
-        except:
-            continue
-    
-    if not future_games:
-        return []
-    
-    future_games.sort(key=lambda x: x['datetime'])
-    next_matchday_date = future_games[0]['date']
-    next_matchday_games = [game for game in future_games if game['date'] == next_matchday_date]
-    
-    return next_matchday_games
-
 def process_team_stats(events, team_name, venue='home'):
     """Processa estatísticas de um time"""
     games = []
@@ -213,43 +180,105 @@ for event in events:
 
 team_list = sorted(list(teams))
 
-# ==================== SEÇÃO 0: PRÓXIMOS JOGOS (TOPO DA PÁGINA) ====================
+# ==================== SEÇÃO DEBUG: PRÓXIMOS JOGOS ====================
 
-next_matchday_games = get_next_matchday_games(events)
+st.header("🔍 DEBUG - Análise de Próximos Jogos")
 
-if next_matchday_games:
-    match_date = datetime.strptime(next_matchday_games[0]['date'], "%Y-%m-%d")
-    weekday_names = {
-        0: "Segunda-feira",
-        1: "Terça-feira",
-        2: "Quarta-feira",
-        3: "Quinta-feira",
-        4: "Sexta-feira",
-        5: "Sábado",
-        6: "Domingo"
-    }
-    weekday = weekday_names[match_date.weekday()]
+now = datetime.now()
+st.write(f"**Data/Hora Atual:** {now.strftime('%Y-%m-%d %H:%M:%S')}")
+st.write(f"**Total de eventos na API:** {len(events)}")
+
+total_events = len(events)
+events_with_score = 0
+events_without_score = 0
+future_events = 0
+past_events = 0
+events_with_date = 0
+events_without_date = 0
+
+debug_data = []
+
+for event in events:
+    has_date = bool(event.get('dateEvent') and event.get('strTime'))
+    has_score = bool(event.get('intHomeScore') and event.get('intAwayScore'))
     
-    st.header(f"📅 Próximos Jogos - {weekday}, {match_date.strftime('%d/%m/%Y')}")
-    st.caption(f"🔄 {len(next_matchday_games)} jogos agendados para análise")
+    if has_date:
+        events_with_date += 1
+        try:
+            match_datetime_str = f"{event['dateEvent']} {event['strTime']}"
+            match_datetime = datetime.strptime(match_datetime_str, "%Y-%m-%d %H:%M:%S")
+            
+            is_future = match_datetime > now
+            
+            if is_future:
+                future_events += 1
+            else:
+                past_events += 1
+            
+            if is_future and not has_score:
+                debug_data.append({
+                    'Data': event['dateEvent'],
+                    'Hora': event['strTime'][:5],
+                    'Casa': event.get('strHomeTeam', 'N/A'),
+                    'Visitante': event.get('strAwayTeam', 'N/A'),
+                    'Placar Casa': event.get('intHomeScore', 'VAZIO'),
+                    'Placar Visitante': event.get('intAwayScore', 'VAZIO'),
+                    'DateTime': match_datetime.strftime('%Y-%m-%d %H:%M')
+                })
+        except Exception as e:
+            st.error(f"Erro ao processar data: {e}")
+    else:
+        events_without_date += 1
     
-    for game in next_matchday_games:
-        column_time, column_match, column_button = st.columns([1, 4, 1])
-        
-        with column_time:
-            st.write(f"**{game['time'][:5]}**")
-        
-        with column_match:
-            st.write(f"🏠 **{game['home']}** vs ✈️ **{game['away']}**")
-        
-        with column_button:
-            if st.button("🔍 Analisar", key=f"analyze_{game['home']}_{game['away']}", use_container_width=True):
-                st.session_state.selected_home = game['home']
-                st.session_state.selected_away = game['away']
-                st.session_state.show_analysis = True
-                st.rerun()
-    
-    st.divider()
+    if has_score:
+        events_with_score += 1
+    else:
+        events_without_score += 1
+
+col1, col2, col3, col4 = st.columns(4)
+with col1:
+    st.metric("Total de Eventos", total_events)
+with col2:
+    st.metric("Com Data/Hora", events_with_date)
+with col3:
+    st.metric("Jogos Futuros", future_events)
+with col4:
+    st.metric("Jogos Passados", past_events)
+
+col1, col2, col3 = st.columns(3)
+with col1:
+    st.metric("Com Placar", events_with_score)
+with col2:
+    st.metric("Sem Placar", events_without_score)
+with col3:
+    st.metric("Sem Data", events_without_date)
+
+if debug_data:
+    st.success(f"✅ **{len(debug_data)} jogos futuros encontrados!**")
+    df_debug = pd.DataFrame(debug_data)
+    st.dataframe(df_debug, use_container_width=True)
+else:
+    st.warning("⚠️ **Nenhum jogo futuro encontrado!**")
+    st.info("Isso significa que:")
+    st.write("1. Todos os jogos da temporada já aconteceram OU")
+    st.write("2. A API não retorna jogos futuros OU")
+    st.write("3. Os jogos futuros têm placares preenchidos")
+
+st.subheader("📋 Amostra de 5 Eventos da API")
+sample_events = events[:5]
+for idx, event in enumerate(sample_events):
+    with st.expander(f"Evento {idx+1}: {event.get('strHomeTeam', 'N/A')} vs {event.get('strAwayTeam', 'N/A')}"):
+        st.json({
+            'dateEvent': event.get('dateEvent'),
+            'strTime': event.get('strTime'),
+            'strHomeTeam': event.get('strHomeTeam'),
+            'strAwayTeam': event.get('strAwayTeam'),
+            'intHomeScore': event.get('intHomeScore'),
+            'intAwayScore': event.get('intAwayScore'),
+            'strStatus': event.get('strStatus')
+        })
+
+st.divider()
 
 # ==================== SEÇÃO 1: ANÁLISE DE JOGO ====================
 
@@ -303,7 +332,6 @@ if home_team != away_team:
             
             markets_data = []
             
-            # ========== RESULTADO DO JOGO ==========
             st.markdown("### 🏆 Resultado do Jogo")
             column_home_result, column_draw_result, column_away_result = st.columns(3)
             
@@ -424,7 +452,6 @@ if home_team != away_team:
                                 'key': 'away'
                             })
             
-            # ========== OVER/UNDER ==========
             st.divider()
             st.markdown("### 📊 Over/Under 2.5 Gols")
             column_over, column_under = st.columns(2)
@@ -507,7 +534,6 @@ if home_team != away_team:
                                 'key': 'under'
                             })
             
-            # ========== BOTÕES DE ADICIONAR ==========
             if markets_data:
                 st.divider()
                 st.success(f"🎯 {len(markets_data)} apostas com EV+ identificadas")
