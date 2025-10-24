@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import requests
 import math
-from datetime import datetime
 
 # Configuração da página
 st.set_page_config(
@@ -11,7 +10,6 @@ st.set_page_config(
     layout="wide"
 )
 
-# Título do Dashboard
 st.title('Sistema de Análise de Valor (EV+) - Brasileirão ⚽')
 
 # --- CONFIGURAÇÃO DA API ---
@@ -22,13 +20,19 @@ HEADERS = {
     "x-rapidapi-host": "v3.football.api-sports.io"
 }
 
+# IDs para Brasileirão Série A
+LEAGUE_ID = 71  # Brasil Série A
+SEASON = 2024
+
 # --- FUNÇÕES DE CÁLCULO ---
 def poisson_probability(k, lambda_value):
-    """Calcula a probabilidade de Poisson para k eventos"""
+    """Calcula a probabilidade de Poisson"""
+    if lambda_value <= 0:
+        return 0
     return (lambda_value ** k * math.exp(-lambda_value)) / math.factorial(k)
 
 def calculate_match_probabilities(home_expected_goals, away_expected_goals, max_goals=7):
-    """Calcula probabilidades de resultados usando distribuição de Poisson"""
+    """Calcula probabilidades usando Poisson"""
     prob_matrix = []
     for home_goals in range(max_goals + 1):
         for away_goals in range(max_goals + 1):
@@ -43,7 +47,7 @@ def calculate_match_probabilities(home_expected_goals, away_expected_goals, max_
     return prob_matrix
 
 def calculate_market_probabilities(prob_matrix):
-    """Calcula probabilidades para diferentes mercados de apostas"""
+    """Calcula probabilidades de mercados"""
     markets = {}
     markets['home_win'] = sum(p['probability'] for p in prob_matrix if p['home_goals'] > p['away_goals'])
     markets['draw'] = sum(p['probability'] for p in prob_matrix if p['home_goals'] == p['away_goals'])
@@ -59,222 +63,237 @@ def calculate_market_probabilities(prob_matrix):
     return markets
 
 def calculate_ev(probability, bookmaker_odd):
-    """Calcula o Valor Esperado (EV)"""
+    """Calcula EV"""
     if bookmaker_odd > 0:
         return (probability * bookmaker_odd) - 1
     return 0
 
 # --- FUNÇÕES DA API ---
-@st.cache_data(ttl=86400)  # Cache por 24 horas
-def get_team_statistics(team_id, season=2024):
-    """Busca estatísticas de um time específico"""
+@st.cache_data(ttl=3600)
+def get_brasileirao_teams():
+    """Busca times do Brasileirão"""
+    url = f"{API_BASE_URL}/teams"
+    params = {
+        "league": LEAGUE_ID,
+        "season": SEASON
+    }
+    try:
+        response = requests.get(url, headers=HEADERS, params=params, timeout=10)
+        
+        if response.status_code == 200:
+            data = response.json()
+            if data.get('response'):
+                teams = []
+                for item in data['response']:
+                    teams.append({
+                        'id': item['team']['id'],
+                        'name': item['team']['name']
+                    })
+                return teams, None
+            else:
+                return [], "Nenhum time encontrado na resposta da API"
+        else:
+            return [], f"Erro HTTP {response.status_code}: {response.text}"
+    except Exception as e:
+        return [], f"Erro na requisição: {str(e)}"
+
+@st.cache_data(ttl=3600)
+def get_team_statistics(team_id):
+    """Busca estatísticas de um time"""
     url = f"{API_BASE_URL}/teams/statistics"
     params = {
         "team": team_id,
-        "season": season,
-        "league": 71  # ID do Brasileirão Série A
+        "season": SEASON,
+        "league": LEAGUE_ID
     }
     try:
-        response = requests.get(url, headers=HEADERS, params=params)
-        if response.status_code == 200:
-            return response.json()
-        else:
-            st.error(f"Erro na API: {response.status_code}")
-            return None
-    except Exception as e:
-        st.error(f"Erro ao buscar dados: {str(e)}")
-        return None
-
-@st.cache_data(ttl=86400)
-def get_brasileirao_teams(season=2024):
-    """Busca lista de times do Brasileirão"""
-    url = f"{API_BASE_URL}/teams"
-    params = {
-        "league": 71,
-        "season": season
-    }
-    try:
-        response = requests.get(url, headers=HEADERS, params=params)
+        response = requests.get(url, headers=HEADERS, params=params, timeout=10)
+        
         if response.status_code == 200:
             data = response.json()
-            teams = []
-            for item in data['response']:
-                teams.append({
-                    'id': item['team']['id'],
-                    'name': item['team']['name']
-                })
-            return teams
+            if data.get('response'):
+                return data['response'], None
+            else:
+                return None, "Sem dados na resposta"
         else:
-            st.error(f"Erro na API: {response.status_code}")
-            return []
+            return None, f"Erro HTTP {response.status_code}"
     except Exception as e:
-        st.error(f"Erro ao buscar times: {str(e)}")
-        return []
+        return None, f"Erro: {str(e)}"
 
-# --- INÍCIO DA APLICAÇÃO ---
-st.header("📊 Dados via API-Football")
+# --- INTERFACE ---
+st.header("📊 Análise com API-Football")
 
-# Verificar se a API Key está configurada
+# Verificar API Key
 if not API_KEY or API_KEY == "COLE_SUA_API_KEY_AQUI":
-    st.error("⚠️ API Key não configurada! Configure o arquivo `.streamlit/secrets.toml`")
+    st.error("⚠️ API Key não configurada!")
     st.stop()
 
-# Buscar times do Brasileirão
-with st.spinner("Carregando times do Brasileirão..."):
-    teams = get_brasileirao_teams()
+# Buscar times
+with st.spinner("Carregando times..."):
+    teams, error = get_brasileirao_teams()
+
+if error:
+    st.error(f"❌ Erro: {error}")
+    st.info("💡 Verifique se sua API Key está correta e se você ainda tem requests disponíveis (100/dia no plano gratuito)")
+    st.stop()
 
 if not teams:
-    st.error("Erro ao carregar times. Verifique sua conexão e API Key.")
+    st.error("Nenhum time encontrado")
     st.stop()
 
-st.success(f"✅ {len(teams)} times carregados com sucesso!")
+st.success(f"✅ {len(teams)} times carregados!")
 
-# --- UI: SELEÇÃO DE TIMES ---
-st.header("Selecione os Times para a Análise")
+# --- SELEÇÃO DE TIMES ---
+st.header("Selecione os Times")
 
-# Criar dicionário de times
 team_dict = {team['name']: team['id'] for team in teams}
 team_names = sorted(team_dict.keys())
 
 col1, col2 = st.columns(2)
 
 with col1:
-    home_team_name = st.selectbox(
-        'Selecione o Time da Casa',
-        options=team_names,
-        index=0
-    )
+    home_team_name = st.selectbox('Time da Casa', team_names, index=0)
     home_team_id = team_dict[home_team_name]
 
 with col2:
-    away_team_name = st.selectbox(
-        'Selecione o Time Visitante',
-        options=team_names,
-        index=1 if len(team_names) > 1 else 0
-    )
+    away_team_name = st.selectbox('Time Visitante', team_names, index=1 if len(team_names) > 1 else 0)
     away_team_id = team_dict[away_team_name]
 
-# --- ANÁLISE ---
 if home_team_name == away_team_name:
-    st.error("Erro: O time da casa e o time visitante não podem ser iguais.")
+    st.error("Times devem ser diferentes")
+    st.stop()
+
+st.success(f"**{home_team_name}** (Casa) vs **{away_team_name}** (Visitante)")
+
+# --- BUSCAR ESTATÍSTICAS ---
+with st.spinner("Buscando estatísticas..."):
+    home_stats, home_error = get_team_statistics(home_team_id)
+    away_stats, away_error = get_team_statistics(away_team_id)
+
+if home_error or away_error:
+    st.error("Erro ao buscar estatísticas")
+    if home_error:
+        st.write(f"Casa: {home_error}")
+    if away_error:
+        st.write(f"Visitante: {away_error}")
+    st.stop()
+
+# --- EXTRAIR DADOS ---
+try:
+    # Dados do time da casa (jogando em casa)
+    home_goals_for = float(home_stats['goals']['for']['average']['home'] or 0)
+    home_goals_against = float(home_stats['goals']['against']['average']['home'] or 0)
+    
+    # Dados do time visitante (jogando fora)
+    away_goals_for = float(away_stats['goals']['for']['average']['away'] or 0)
+    away_goals_against = float(away_stats['goals']['against']['average']['away'] or 0)
+    
+    # Gols esperados
+    expected_home = (home_goals_for + away_goals_against) / 2 if (home_goals_for + away_goals_against) > 0 else 1.0
+    expected_away = (away_goals_for + home_goals_against) / 2 if (away_goals_for + home_goals_against) > 0 else 1.0
+    
+except Exception as e:
+    st.error(f"Erro ao processar dados: {str(e)}")
+    st.stop()
+
+# --- EXIBIR ESTATÍSTICAS ---
+st.header("📊 Estatísticas Temporada 2024")
+col1, col2, col3 = st.columns(3)
+
+with col1:
+    st.metric(f"Gols Esperados - {home_team_name}", f"{expected_home:.2f}")
+with col2:
+    st.metric(f"Gols Esperados - {away_team_name}", f"{expected_away:.2f}")
+with col3:
+    st.metric("Total Esperado", f"{expected_home + expected_away:.2f}")
+
+# --- CALCULAR PROBABILIDADES ---
+prob_matrix = calculate_match_probabilities(expected_home, expected_away)
+markets = calculate_market_probabilities(prob_matrix)
+
+# --- ANÁLISE DE VALOR ---
+st.header("🎯 Análise de Valor (EV+)")
+
+positive_ev_bets = []
+
+# Resultado
+st.subheader("Resultado do Jogo")
+col1, col2, col3 = st.columns(3)
+
+with col1:
+    st.write(f"**Vitória {home_team_name}**")
+    st.write(f"Prob: **{markets['home_win']*100:.1f}%**")
+    odd_home = st.number_input("Odd:", min_value=1.01, value=2.00, step=0.01, key="home")
+    ev_home = calculate_ev(markets['home_win'], odd_home)
+    st.metric("EV", f"{ev_home*100:.1f}%", delta="✅" if ev_home > 0 else "❌")
+    if ev_home > 0:
+        positive_ev_bets.append({'Mercado': f'Vitória {home_team_name}', 'Prob': f"{markets['home_win']*100:.1f}%", 'Odd': odd_home, 'EV': f"{ev_home*100:.1f}%"})
+
+with col2:
+    st.write("**Empate**")
+    st.write(f"Prob: **{markets['draw']*100:.1f}%**")
+    odd_draw = st.number_input("Odd:", min_value=1.01, value=3.00, step=0.01, key="draw")
+    ev_draw = calculate_ev(markets['draw'], odd_draw)
+    st.metric("EV", f"{ev_draw*100:.1f}%", delta="✅" if ev_draw > 0 else "❌")
+    if ev_draw > 0:
+        positive_ev_bets.append({'Mercado': 'Empate', 'Prob': f"{markets['draw']*100:.1f}%", 'Odd': odd_draw, 'EV': f"{ev_draw*100:.1f}%"})
+
+with col3:
+    st.write(f"**Vitória {away_team_name}**")
+    st.write(f"Prob: **{markets['away_win']*100:.1f}%**")
+    odd_away = st.number_input("Odd:", min_value=1.01, value=4.00, step=0.01, key="away")
+    ev_away = calculate_ev(markets['away_win'], odd_away)
+    st.metric("EV", f"{ev_away*100:.1f}%", delta="✅" if ev_away > 0 else "❌")
+    if ev_away > 0:
+        positive_ev_bets.append({'Mercado': f'Vitória {away_team_name}', 'Prob': f"{markets['away_win']*100:.1f}%", 'Odd': odd_away, 'EV': f"{ev_away*100:.1f}%"})
+
+# Over/Under
+st.subheader("Over/Under Gols")
+over_markets = [
+    ('over_2.5', 'Mais de 2.5', 2.50),
+    ('under_2.5', 'Menos de 2.5', 1.80),
+]
+
+cols = st.columns(2)
+for idx, (key, name, default_odd) in enumerate(over_markets):
+    with cols[idx]:
+        st.write(f"**{name}**")
+        st.write(f"Prob: **{markets[key]*100:.1f}%**")
+        odd = st.number_input("Odd:", min_value=1.01, value=default_odd, step=0.01, key=key)
+        ev = calculate_ev(markets[key], odd)
+        st.metric("EV", f"{ev*100:.1f}%", delta="✅" if ev > 0 else "❌")
+        if ev > 0:
+            positive_ev_bets.append({'Mercado': name, 'Prob': f"{markets[key]*100:.1f}%", 'Odd': odd, 'EV': f"{ev*100:.1f}%"})
+
+# BTTS
+st.subheader("Ambos Marcam")
+col1, col2 = st.columns(2)
+
+with col1:
+    st.write("**BTTS - SIM**")
+    st.write(f"Prob: **{markets['btts_yes']*100:.1f}%**")
+    odd_btts_yes = st.number_input("Odd:", min_value=1.01, value=2.00, step=0.01, key="btts_yes")
+    ev_btts_yes = calculate_ev(markets['btts_yes'], odd_btts_yes)
+    st.metric("EV", f"{ev_btts_yes*100:.1f}%", delta="✅" if ev_btts_yes > 0 else "❌")
+    if ev_btts_yes > 0:
+        positive_ev_bets.append({'Mercado': 'BTTS SIM', 'Prob': f"{markets['btts_yes']*100:.1f}%", 'Odd': odd_btts_yes, 'EV': f"{ev_btts_yes*100:.1f}%"})
+
+with col2:
+    st.write("**BTTS - NÃO**")
+    st.write(f"Prob: **{markets['btts_no']*100:.1f}%**")
+    odd_btts_no = st.number_input("Odd:", min_value=1.01, value=1.80, step=0.01, key="btts_no")
+    ev_btts_no = calculate_ev(markets['btts_no'], odd_btts_no)
+    st.metric("EV", f"{ev_btts_no*100:.1f}%", delta="✅" if ev_btts_no > 0 else "❌")
+    if ev_btts_no > 0:
+        positive_ev_bets.append({'Mercado': 'BTTS NÃO', 'Prob': f"{markets['btts_no']*100:.1f}%", 'Odd': odd_btts_no, 'EV': f"{ev_btts_no*100:.1f}%"})
+
+# --- RESULTADO ---
+st.header("🏆 Melhores Apostas EV+")
+
+if positive_ev_bets:
+    sorted_bets = sorted(positive_ev_bets, key=lambda x: float(x['EV'].replace('%', '')), reverse=True)
+    df_bets = pd.DataFrame(sorted_bets)
+    st.success(f"✅ {len(positive_ev_bets)} apostas com EV+")
+    st.dataframe(df_bets, use_container_width=True, hide_index=True)
 else:
-    st.success(f"Análise para o jogo: **{home_team_name}** (Casa) vs **{away_team_name}** (Visitante)")
-    
-    # Buscar estatísticas dos times
-    with st.spinner("Buscando dados da API..."):
-        home_stats = get_team_statistics(home_team_id)
-        away_stats = get_team_statistics(away_team_id)
-    
-    if home_stats and away_stats:
-        # Extrair dados de gols
-        home_goals_home = home_stats['response']['goals']['for']['average']['home']
-        home_goals_against_home = home_stats['response']['goals']['against']['average']['home']
-        
-        away_goals_away = away_stats['response']['goals']['for']['average']['away']
-        away_goals_against_away = away_stats['response']['goals']['against']['average']['away']
-        
-        # Calcular gols esperados
-        expected_home_goals = (float(home_goals_home) + float(away_goals_against_away)) / 2
-        expected_away_goals = (float(away_goals_away) + float(home_goals_against_home)) / 2
-        
-        # Exibir estatísticas
-        st.header("📊 Estatísticas da Temporada 2024")
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            st.metric(f"Gols Esperados - {home_team_name}", f"{expected_home_goals:.2f}")
-        with col2:
-            st.metric(f"Gols Esperados - {away_team_name}", f"{expected_away_goals:.2f}")
-        with col3:
-            st.metric("Total de Gols Esperados", f"{expected_home_goals + expected_away_goals:.2f}")
-        
-        # Calcular probabilidades
-        prob_matrix = calculate_match_probabilities(expected_home_goals, expected_away_goals)
-        markets = calculate_market_probabilities(prob_matrix)
-        
-        # --- ANÁLISE DE VALOR ---
-        st.header("🎯 Análise de Valor (EV+)")
-        
-        positive_ev_bets = []
-        
-        # Resultado do Jogo
-        st.subheader("Resultado do Jogo")
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            st.write(f"**Vitória {home_team_name}**")
-            st.write(f"Probabilidade: **{markets['home_win']*100:.2f}%**")
-            odd_home = st.number_input("Odd:", min_value=1.01, value=2.00, step=0.01, key="home")
-            ev_home = calculate_ev(markets['home_win'], odd_home)
-            st.metric("EV", f"{ev_home*100:.2f}%", delta="✅ EV+" if ev_home > 0 else "❌ EV-")
-            if ev_home > 0:
-                positive_ev_bets.append({
-                    'Mercado': f'Vitória {home_team_name}',
-                    'Probabilidade': f"{markets['home_win']*100:.2f}%",
-                    'Odd': odd_home,
-                    'EV': f"{ev_home*100:.2f}%"
-                })
-        
-        with col2:
-            st.write("**Empate**")
-            st.write(f"Probabilidade: **{markets['draw']*100:.2f}%**")
-            odd_draw = st.number_input("Odd:", min_value=1.01, value=3.00, step=0.01, key="draw")
-            ev_draw = calculate_ev(markets['draw'], odd_draw)
-            st.metric("EV", f"{ev_draw*100:.2f}%", delta="✅ EV+" if ev_draw > 0 else "❌ EV-")
-            if ev_draw > 0:
-                positive_ev_bets.append({
-                    'Mercado': 'Empate',
-                    'Probabilidade': f"{markets['draw']*100:.2f}%",
-                    'Odd': odd_draw,
-                    'EV': f"{ev_draw*100:.2f}%"
-                })
-        
-        with col3:
-            st.write(f"**Vitória {away_team_name}**")
-            st.write(f"Probabilidade: **{markets['away_win']*100:.2f}%**")
-            odd_away = st.number_input("Odd:", min_value=1.01, value=4.00, step=0.01, key="away")
-            ev_away = calculate_ev(markets['away_win'], odd_away)
-            st.metric("EV", f"{ev_away*100:.2f}%", delta="✅ EV+" if ev_away > 0 else "❌ EV-")
-            if ev_away > 0:
-                positive_ev_bets.append({
-                    'Mercado': f'Vitória {away_team_name}',
-                    'Probabilidade': f"{markets['away_win']*100:.2f}%",
-                    'Odd': odd_away,
-                    'EV': f"{ev_away*100:.2f}%"
-                })
-        
-        # Over/Under
-        st.subheader("Over/Under - Total de Gols")
-        over_markets = [
-            ('over_2.5', 'Mais de 2.5 Gols', 2.50),
-            ('under_2.5', 'Menos de 2.5 Gols', 1.80),
-        ]
-        
-        cols = st.columns(2)
-        for idx, (key, name, default_odd) in enumerate(over_markets):
-            with cols[idx]:
-                st.write(f"**{name}**")
-                st.write(f"Probabilidade: **{markets[key]*100:.2f}%**")
-                odd = st.number_input("Odd:", min_value=1.01, value=default_odd, step=0.01, key=key)
-                ev = calculate_ev(markets[key], odd)
-                st.metric("EV", f"{ev*100:.2f}%", delta="✅ EV+" if ev > 0 else "❌ EV-")
-                if ev > 0:
-                    positive_ev_bets.append({
-                        'Mercado': name,
-                        'Probabilidade': f"{markets[key]*100:.2f}%",
-                        'Odd': odd,
-                        'EV': f"{ev*100:.2f}%"
-                    })
-        
-        # --- RESULTADO FINAL ---
-        st.header("🏆 Melhores Apostas de Valor (EV+)")
-        
-        if len(positive_ev_bets) > 0:
-            positive_ev_bets_sorted = sorted(positive_ev_bets, key=lambda x: float(x['EV'].replace('%', '')), reverse=True)
-            df_bets = pd.DataFrame(positive_ev_bets_sorted)
-            st.success(f"✅ **{len(positive_ev_bets)} apostas com Valor Positivo encontradas!**")
-            st.dataframe(df_bets, use_container_width=True, hide_index=True)
-        else:
-            st.warning("⚠️ Nenhuma aposta com EV+ encontrada com as odds inseridas.")
-    else:
-        st.error("Erro ao buscar dados dos times.")
+    st.warning("⚠️ Nenhuma aposta com EV+ encontrada")
