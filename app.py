@@ -34,6 +34,13 @@ def calculate_markets(probability_matrix):
 def calculate_ev(probability, odd):
     return (probability * odd) - 1 if odd > 0 else 0
 
+def calculate_kelly_criterion(probability, odd):
+    """Calcula a fração Kelly para uma aposta"""
+    if odd <= 1:
+        return 0
+    kelly = (probability * odd - 1) / (odd - 1)
+    return max(0, min(kelly, 0.25))  # Limita a 25% da banca (Kelly conservador)
+
 # --- FUNÇÕES DA API ---
 API_BASE = "https://www.thesportsdb.com/api/v1/json/3"
 LEAGUE_ID = "4351"
@@ -344,26 +351,66 @@ if len(st.session_state.multiple_bets) > 0:
     st.subheader("💰 Gestão de Banca")
     
     stake_input = st.text_input(
-        "💵 Valor a Apostar (em centavos - ex: 10000 = R$ 100,00):",
+        "💵 Valor Total a Apostar (em centavos - ex: 1000 = R$ 10,00):",
         value="",
-        placeholder="Ex: 10000"
+        placeholder="Ex: 1000"
     )
     
     if stake_input and stake_input.isdigit():
-        stake = float(stake_input) / 100
+        stake_total = float(stake_input) / 100
         
-        st.info(f"**Investimento: R$ {stake:.2f}**")
+        st.info(f"**Investimento Total: R$ {stake_total:.2f}**")
         
-        total_return = stake * odd_total
-        profit = total_return - stake
+        # Calcular Kelly para cada aposta
+        kelly_values = []
+        total_kelly = 0
+        
+        for bet in st.session_state.multiple_bets:
+            kelly = calculate_kelly_criterion(bet['prob'], bet['odd'])
+            kelly_values.append(kelly)
+            total_kelly += kelly
+        
+        # Distribuir valor proporcionalmente ao Kelly
+        st.markdown("### 📈 Distribuição Recomendada (Kelly Criterion)")
+        st.caption("💡 Distribuição baseada no valor esperado de cada aposta")
+        
+        distribution_data = []
+        
+        for index, bet in enumerate(st.session_state.multiple_bets):
+            if total_kelly > 0:
+                percentage = (kelly_values[index] / total_kelly) * 100
+                recommended_stake = stake_total * (kelly_values[index] / total_kelly)
+            else:
+                percentage = 100 / len(st.session_state.multiple_bets)
+                recommended_stake = stake_total / len(st.session_state.multiple_bets)
+            
+            distribution_data.append({
+                'Jogo': bet['jogo'],
+                'Mercado': bet['mercado'],
+                'Odd': f"{bet['odd']:.2f}",
+                'EV': f"+{bet['ev']*100:.1f}%",
+                'Percentual': f"{percentage:.1f}%",
+                'Valor Sugerido': f"R$ {recommended_stake:.2f}"
+            })
+        
+        dataframe_distribution = pd.DataFrame(distribution_data)
+        st.dataframe(dataframe_distribution, use_container_width=True, hide_index=True)
+        
+        st.divider()
+        
+        # Projeções
+        st.subheader("📊 Projeções")
+        
+        total_return = stake_total * odd_total
+        profit = total_return - stake_total
         
         column_stake, column_return, column_profit = st.columns(3)
         with column_stake:
-            st.metric("Investimento", f"R$ {stake:.2f}")
+            st.metric("Investimento Total", f"R$ {stake_total:.2f}")
         with column_return:
-            st.metric("Retorno se Ganhar", f"R$ {total_return:.2f}")
+            st.metric("Retorno se Ganhar Tudo", f"R$ {total_return:.2f}")
         with column_profit:
-            st.metric("Lucro Potencial", f"R$ {profit:.2f}", delta=f"+{(profit/stake)*100:.1f}%")
+            st.metric("Lucro Potencial", f"R$ {profit:.2f}", delta=f"+{(profit/stake_total)*100:.1f}%")
     
     st.divider()
     
