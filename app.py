@@ -7,7 +7,8 @@ from datetime import datetime, timedelta
 st.set_page_config(page_title="Sistema EV+ - Brasileirão 2025", page_icon="⚽", layout="wide")
 st.title('⚽ Sistema de Análise de Valor (EV+) - Brasileirão 2025')
 
-# --- FUNÇÕES MATEMÁTICAS ---
+# ==================== FUNÇÕES MATEMÁTICAS ====================
+
 def poisson_probability(k, lambda_value):
     """Calcula a probabilidade de Poisson"""
     if lambda_value <= 0:
@@ -20,18 +21,22 @@ def calculate_match_probabilities(home_expected_goals, away_expected_goals, max_
     for home_goals in range(max_goals + 1):
         for away_goals in range(max_goals + 1):
             probability = poisson_probability(home_goals, home_expected_goals) * poisson_probability(away_goals, away_expected_goals)
-            probability_matrix.append({'home_goals': home_goals, 'away_goals': away_goals, 'probability': probability})
+            probability_matrix.append({
+                'home_goals': home_goals,
+                'away_goals': away_goals,
+                'probability': probability
+            })
     return probability_matrix
 
 def calculate_markets(probability_matrix):
     """Calcula probabilidades de mercados de apostas"""
     markets = {}
-    markets['home_win'] = sum(probability['probability'] for probability in probability_matrix if probability['home_goals'] > probability['away_goals'])
-    markets['draw'] = sum(probability['probability'] for probability in probability_matrix if probability['home_goals'] == probability['away_goals'])
-    markets['away_win'] = sum(probability['probability'] for probability in probability_matrix if probability['home_goals'] < probability['away_goals'])
-    markets['over_2.5'] = sum(probability['probability'] for probability in probability_matrix if (probability['home_goals'] + probability['away_goals']) > 2.5)
+    markets['home_win'] = sum(p['probability'] for p in probability_matrix if p['home_goals'] > p['away_goals'])
+    markets['draw'] = sum(p['probability'] for p in probability_matrix if p['home_goals'] == p['away_goals'])
+    markets['away_win'] = sum(p['probability'] for p in probability_matrix if p['home_goals'] < p['away_goals'])
+    markets['over_2.5'] = sum(p['probability'] for p in probability_matrix if (p['home_goals'] + p['away_goals']) > 2.5)
     markets['under_2.5'] = 1 - markets['over_2.5']
-    markets['btts_yes'] = sum(probability['probability'] for probability in probability_matrix if probability['home_goals'] > 0 and probability['away_goals'] > 0)
+    markets['btts_yes'] = sum(p['probability'] for p in probability_matrix if p['home_goals'] > 0 and p['away_goals'] > 0)
     markets['btts_no'] = 1 - markets['btts_yes']
     return markets
 
@@ -92,7 +97,8 @@ def calculate_bankroll_distribution(total_bankroll, bets, risk_profile="balanced
     
     return recommendations
 
-# --- FUNÇÕES DA API ---
+# ==================== FUNÇÕES DA API ====================
+
 API_BASE = "https://www.thesportsdb.com/api/v1/json/3"
 LEAGUE_ID = "4351"
 
@@ -140,9 +146,7 @@ def get_next_matchday_games(events):
         return []
     
     future_games.sort(key=lambda x: x['datetime'])
-    
     next_matchday_date = future_games[0]['date']
-    
     next_matchday_games = [game for game in future_games if game['date'] == next_matchday_date]
     
     return next_matchday_games
@@ -155,20 +159,29 @@ def process_team_stats(events, team_name, venue='home'):
             continue
         try:
             if venue == 'home' and event.get('strHomeTeam') == team_name:
-                games.append({'scored': int(event['intHomeScore']), 'conceded': int(event['intAwayScore'])})
+                games.append({
+                    'scored': int(event['intHomeScore']),
+                    'conceded': int(event['intAwayScore'])
+                })
             elif venue == 'away' and event.get('strAwayTeam') == team_name:
-                games.append({'scored': int(event['intAwayScore']), 'conceded': int(event['intHomeScore'])})
+                games.append({
+                    'scored': int(event['intAwayScore']),
+                    'conceded': int(event['intHomeScore'])
+                })
         except:
             continue
+    
     if not games:
         return None
+    
     return {
         'games': len(games),
         'scored_average': sum(game['scored'] for game in games) / len(games),
         'conceded_average': sum(game['conceded'] for game in games) / len(games)
     }
 
-# --- INICIALIZAR ESTADO ---
+# ==================== INICIALIZAR ESTADO ====================
+
 if 'multiple_bets' not in st.session_state:
     st.session_state.multiple_bets = []
 if 'show_analysis' not in st.session_state:
@@ -178,7 +191,8 @@ if 'selected_home' not in st.session_state:
 if 'selected_away' not in st.session_state:
     st.session_state.selected_away = None
 
-# --- CARREGAR DADOS ---
+# ==================== CARREGAR DADOS ====================
+
 with st.spinner("🔄 Carregando dados..."):
     events, error, season_used = get_season_results()
 
@@ -188,6 +202,7 @@ if error or not events:
 
 teams = set()
 completed_games = 0
+
 for event in events:
     if event.get('intHomeScore') and event.get('intAwayScore'):
         completed_games += 1
@@ -198,54 +213,26 @@ for event in events:
 
 team_list = sorted(list(teams))
 
-# --- SEÇÃO 0: PRÓXIMA RODADA ---
-next_matchday_games = get_next_matchday_games(events)
+# ==================== SEÇÃO 1: ANÁLISE DE JOGO ====================
 
-if next_matchday_games:
-    match_date = datetime.strptime(next_matchday_games[0]['date'], "%Y-%m-%d")
-    weekday_names = {
-        0: "Segunda-feira",
-        1: "Terça-feira",
-        2: "Quarta-feira",
-        3: "Quinta-feira",
-        4: "Sexta-feira",
-        5: "Sábado",
-        6: "Domingo"
-    }
-    weekday = weekday_names[match_date.weekday()]
-    
-    st.header(f"📅 Próxima Rodada - {weekday}, {match_date.strftime('%d/%m/%Y')}")
-    st.caption(f"🔄 {len(next_matchday_games)} jogos agendados")
-    
-    for game in next_matchday_games:
-        column_time, column_match, column_button = st.columns([1, 4, 1])
-        
-        with column_time:
-            st.write(f"**{game['time'][:5]}**")
-        
-        with column_match:
-            st.write(f"🏠 **{game['home']}** vs ✈️ **{game['away']}**")
-        
-        with column_button:
-            if st.button("🔍 Analisar", key=f"analyze_{game['home']}_{game['away']}", use_container_width=True):
-                st.session_state.selected_home = game['home']
-                st.session_state.selected_away = game['away']
-                st.session_state.show_analysis = True
-                st.rerun()
-    
-    st.divider()
-
-# --- SEÇÃO 1: ANÁLISE DE JOGO ---
 st.header("⚽ Análise de Jogo")
 st.caption(f"✅ {completed_games} jogos completos | {len(team_list)} times | Temporada {season_used}")
 
 column_home, column_away = st.columns(2)
+
 with column_home:
-    home_team_index = team_list.index(st.session_state.selected_home) if st.session_state.selected_home in team_list else 0
-    home_team = st.selectbox('🏠 Time da Casa', team_list, index=home_team_index)
+    if st.session_state.selected_home and st.session_state.selected_home in team_list:
+        home_team_index = team_list.index(st.session_state.selected_home)
+    else:
+        home_team_index = 0
+    home_team = st.selectbox('🏠 Time da Casa', team_list, index=home_team_index, key='select_home')
+
 with column_away:
-    away_team_index = team_list.index(st.session_state.selected_away) if st.session_state.selected_away in team_list else 1
-    away_team = st.selectbox('✈️ Time Visitante', team_list, index=away_team_index)
+    if st.session_state.selected_away and st.session_state.selected_away in team_list:
+        away_team_index = team_list.index(st.session_state.selected_away)
+    else:
+        away_team_index = 1
+    away_team = st.selectbox('✈️ Time Visitante', team_list, index=away_team_index, key='select_away')
 
 if home_team != away_team:
     if st.button("🔍 ANALISAR JOGO", type="primary", use_container_width=True):
@@ -278,7 +265,7 @@ if home_team != away_team:
             
             markets_data = []
             
-            # Resultado do Jogo
+            # ========== RESULTADO DO JOGO ==========
             st.markdown("### 🏆 Resultado do Jogo")
             column_home_result, column_draw_result, column_away_result = st.columns(3)
             
@@ -399,7 +386,7 @@ if home_team != away_team:
                                 'key': 'away'
                             })
             
-            # Over/Under
+            # ========== OVER/UNDER ==========
             st.divider()
             st.markdown("### 📊 Over/Under 2.5 Gols")
             column_over, column_under = st.columns(2)
@@ -482,7 +469,7 @@ if home_team != away_team:
                                 'key': 'under'
                             })
             
-            # Botões de adicionar
+            # ========== BOTÕES DE ADICIONAR ==========
             if markets_data:
                 st.divider()
                 st.success(f"🎯 {len(markets_data)} apostas com EV+ identificadas")
@@ -503,7 +490,45 @@ if home_team != away_team:
                             st.session_state.multiple_bets.append(market)
                             st.success("✅")
 
-# --- SEÇÃO 2: GESTÃO DE BANCA INTELIGENTE ---
+# ==================== SEÇÃO 2: PRÓXIMOS JOGOS ====================
+
+st.divider()
+next_matchday_games = get_next_matchday_games(events)
+
+if next_matchday_games:
+    match_date = datetime.strptime(next_matchday_games[0]['date'], "%Y-%m-%d")
+    weekday_names = {
+        0: "Segunda-feira",
+        1: "Terça-feira",
+        2: "Quarta-feira",
+        3: "Quinta-feira",
+        4: "Sexta-feira",
+        5: "Sábado",
+        6: "Domingo"
+    }
+    weekday = weekday_names[match_date.weekday()]
+    
+    st.header(f"📅 Próximos Jogos - {weekday}, {match_date.strftime('%d/%m/%Y')}")
+    st.caption(f"🔄 {len(next_matchday_games)} jogos agendados para análise")
+    
+    for game in next_matchday_games:
+        column_time, column_match, column_button = st.columns([1, 4, 1])
+        
+        with column_time:
+            st.write(f"**{game['time'][:5]}**")
+        
+        with column_match:
+            st.write(f"🏠 **{game['home']}** vs ✈️ **{game['away']}**")
+        
+        with column_button:
+            if st.button("🔍 Analisar", key=f"analyze_{game['home']}_{game['away']}", use_container_width=True):
+                st.session_state.selected_home = game['home']
+                st.session_state.selected_away = game['away']
+                st.session_state.show_analysis = True
+                st.rerun()
+
+# ==================== SEÇÃO 3: GESTÃO DE BANCA INTELIGENTE ====================
+
 st.divider()
 st.header("💰 Gestão de Banca Inteligente")
 
