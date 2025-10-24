@@ -12,27 +12,27 @@ def poisson_probability(k, lambda_value):
         lambda_value = 0.5
     return (lambda_value ** k * math.exp(-lambda_value)) / math.factorial(k)
 
-def calculate_match_probabilities(home_exp, away_exp, max_goals=7):
-    prob_matrix = []
-    for hg in range(max_goals + 1):
-        for ag in range(max_goals + 1):
-            p = poisson_probability(hg, home_exp) * poisson_probability(ag, away_exp)
-            prob_matrix.append({'home_goals': hg, 'away_goals': ag, 'probability': p})
-    return prob_matrix
+def calculate_match_probabilities(home_expected_goals, away_expected_goals, max_goals=7):
+    probability_matrix = []
+    for home_goals in range(max_goals + 1):
+        for away_goals in range(max_goals + 1):
+            probability = poisson_probability(home_goals, home_expected_goals) * poisson_probability(away_goals, away_expected_goals)
+            probability_matrix.append({'home_goals': home_goals, 'away_goals': away_goals, 'probability': probability})
+    return probability_matrix
 
-def calculate_markets(prob_matrix):
-    m = {}
-    m['home_win'] = sum(p['probability'] for p in prob_matrix if p['home_goals'] > p['away_goals'])
-    m['draw'] = sum(p['probability'] for p in prob_matrix if p['home_goals'] == p['away_goals'])
-    m['away_win'] = sum(p['probability'] for p in prob_matrix if p['home_goals'] < p['away_goals'])
-    m['over_2.5'] = sum(p['probability'] for p in prob_matrix if (p['home_goals'] + p['away_goals']) > 2.5)
-    m['under_2.5'] = 1 - m['over_2.5']
-    m['btts_yes'] = sum(p['probability'] for p in prob_matrix if p['home_goals'] > 0 and p['away_goals'] > 0)
-    m['btts_no'] = 1 - m['btts_yes']
-    return m
+def calculate_markets(probability_matrix):
+    markets = {}
+    markets['home_win'] = sum(probability['probability'] for probability in probability_matrix if probability['home_goals'] > probability['away_goals'])
+    markets['draw'] = sum(probability['probability'] for probability in probability_matrix if probability['home_goals'] == probability['away_goals'])
+    markets['away_win'] = sum(probability['probability'] for probability in probability_matrix if probability['home_goals'] < probability['away_goals'])
+    markets['over_2.5'] = sum(probability['probability'] for probability in probability_matrix if (probability['home_goals'] + probability['away_goals']) > 2.5)
+    markets['under_2.5'] = 1 - markets['over_2.5']
+    markets['btts_yes'] = sum(probability['probability'] for probability in probability_matrix if probability['home_goals'] > 0 and probability['away_goals'] > 0)
+    markets['btts_no'] = 1 - markets['btts_yes']
+    return markets
 
-def calculate_ev(prob, odd):
-    return (prob * odd) - 1 if odd > 0 else 0
+def calculate_ev(probability, odd):
+    return (probability * odd) - 1 if odd > 0 else 0
 
 # --- FUNÇÕES DA API ---
 API_BASE = "https://www.thesportsdb.com/api/v1/json/3"
@@ -69,8 +69,8 @@ def process_team_stats(events, team_name, venue='home'):
         return None
     return {
         'games': len(games),
-        'scored_avg': sum(g['scored'] for g in games) / len(games),
-        'conceded_avg': sum(g['conceded'] for g in games) / len(games)
+        'scored_average': sum(game['scored'] for game in games) / len(games),
+        'conceded_average': sum(game['conceded'] for game in games) / len(games)
     }
 
 # --- INICIALIZAR ESTADO ---
@@ -103,10 +103,10 @@ team_list = sorted(list(teams))
 st.header("⚽ Análise de Jogo")
 st.caption(f"✅ {completed_games} jogos | {len(team_list)} times | Temporada {season_used}")
 
-col1, col2 = st.columns(2)
-with col1:
+column_home, column_away = st.columns(2)
+with column_home:
     home_team = st.selectbox('🏠 Time da Casa', team_list, index=0)
-with col2:
+with column_away:
     away_team = st.selectbox('✈️ Time Visitante', team_list, index=1)
 
 if home_team != away_team:
@@ -114,173 +114,174 @@ if home_team != away_team:
         st.session_state.show_analysis = True
     
     if st.session_state.show_analysis:
-        home_stats = process_team_stats(events, home_team, 'home')
-        away_stats = process_team_stats(events, away_team, 'away')
+        home_statistics = process_team_stats(events, home_team, 'home')
+        away_statistics = process_team_stats(events, away_team, 'away')
         
-        if home_stats and away_stats:
-            exp_home = (home_stats['scored_avg'] + away_stats['conceded_avg']) / 2
-            exp_away = (away_stats['scored_avg'] + home_stats['conceded_avg']) / 2
+        if home_statistics and away_statistics:
+            expected_home_goals = (home_statistics['scored_average'] + away_statistics['conceded_average']) / 2
+            expected_away_goals = (away_statistics['scored_average'] + home_statistics['conceded_average']) / 2
             
             st.success(f"**{home_team}** vs **{away_team}**")
             
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric(home_team, f"{exp_home:.2f} gols")
-            with col2:
-                st.metric(away_team, f"{exp_away:.2f} gols")
-            with col3:
-                st.metric("Total", f"{exp_home + exp_away:.2f} gols")
+            column_home_metric, column_away_metric, column_total_metric = st.columns(3)
+            with column_home_metric:
+                st.metric(home_team, f"{expected_home_goals:.2f} gols")
+            with column_away_metric:
+                st.metric(away_team, f"{expected_away_goals:.2f} gols")
+            with column_total_metric:
+                st.metric("Total", f"{expected_home_goals + expected_away_goals:.2f} gols")
             
-            prob_matrix = calculate_match_probabilities(exp_home, exp_away)
-            markets = calculate_markets(prob_matrix)
+            probability_matrix = calculate_match_probabilities(expected_home_goals, expected_away_goals)
+            markets = calculate_markets(probability_matrix)
             
-            st.subheader("🎯 Insira as Odds")
-            st.caption("💡 Digite apenas números - Ex: 225 = 2,25 | 180 = 1,80 | 15 = 1,5")
+            st.divider()
+            st.subheader("💡 Insira as Odds")
+            st.caption("Digite apenas números - Ex: 225 = 2,25 | 180 = 1,80 | 15 = 1,5")
             
             markets_data = []
             
-            # Resultado
-            st.write("**Resultado do Jogo:**")
-            col1, col2, col3 = st.columns(3)
+            # Resultado do Jogo
+            st.markdown("### 🏆 Resultado do Jogo")
+            column_home_result, column_draw_result, column_away_result = st.columns(3)
             
-            with col1:
+            with column_home_result:
                 st.write(f"**{home_team}**")
                 st.write(f"Probabilidade: {markets['home_win']*100:.1f}%")
-                odd_input_h = st.text_input(
+                odd_input_home = st.text_input(
                     "Odd (ex: 225 = 2,25):", 
                     value="",
-                    key=f"h_{home_team}_{away_team}",
+                    key=f"home_{home_team}_{away_team}",
                     placeholder="Ex: 225"
                 )
                 
-                if odd_input_h and odd_input_h.isdigit():
-                    odd_h = float(odd_input_h) / 100
-                    if odd_h >= 1.01:
-                        st.info(f"Odd: **{odd_h:.2f}**")
-                        ev_h = calculate_ev(markets['home_win'], odd_h)
-                        st.metric("EV", f"{ev_h*100:.1f}%", delta="✅ Valor!" if ev_h > 0 else "❌")
+                if odd_input_home and odd_input_home.isdigit():
+                    odd_home = float(odd_input_home) / 100
+                    if odd_home >= 1.01:
+                        st.info(f"Odd: **{odd_home:.2f}**")
+                        ev_home = calculate_ev(markets['home_win'], odd_home)
+                        st.metric("EV", f"{ev_home*100:.1f}%", delta="✅ Valor!" if ev_home > 0 else "❌")
                         
-                        if ev_h > 0:
+                        if ev_home > 0:
                             markets_data.append({
                                 'jogo': f"{home_team} vs {away_team}",
                                 'mercado': f'Vitória {home_team}',
                                 'prob': markets['home_win'],
-                                'odd': odd_h,
-                                'ev': ev_h,
-                                'key': 'h'
+                                'odd': odd_home,
+                                'ev': ev_home,
+                                'key': 'home'
                             })
             
-            with col2:
+            with column_draw_result:
                 st.write("**Empate**")
                 st.write(f"Probabilidade: {markets['draw']*100:.1f}%")
-                odd_input_d = st.text_input(
+                odd_input_draw = st.text_input(
                     "Odd (ex: 300 = 3,00):", 
                     value="",
-                    key=f"d_{home_team}_{away_team}",
+                    key=f"draw_{home_team}_{away_team}",
                     placeholder="Ex: 300"
                 )
                 
-                if odd_input_d and odd_input_d.isdigit():
-                    odd_d = float(odd_input_d) / 100
-                    if odd_d >= 1.01:
-                        st.info(f"Odd: **{odd_d:.2f}**")
-                        ev_d = calculate_ev(markets['draw'], odd_d)
-                        st.metric("EV", f"{ev_d*100:.1f}%", delta="✅ Valor!" if ev_d > 0 else "❌")
+                if odd_input_draw and odd_input_draw.isdigit():
+                    odd_draw = float(odd_input_draw) / 100
+                    if odd_draw >= 1.01:
+                        st.info(f"Odd: **{odd_draw:.2f}**")
+                        ev_draw = calculate_ev(markets['draw'], odd_draw)
+                        st.metric("EV", f"{ev_draw*100:.1f}%", delta="✅ Valor!" if ev_draw > 0 else "❌")
                         
-                        if ev_d > 0:
+                        if ev_draw > 0:
                             markets_data.append({
                                 'jogo': f"{home_team} vs {away_team}",
                                 'mercado': 'Empate',
                                 'prob': markets['draw'],
-                                'odd': odd_d,
-                                'ev': ev_d,
-                                'key': 'd'
+                                'odd': odd_draw,
+                                'ev': ev_draw,
+                                'key': 'draw'
                             })
             
-            with col3:
+            with column_away_result:
                 st.write(f"**{away_team}**")
                 st.write(f"Probabilidade: {markets['away_win']*100:.1f}%")
-                odd_input_a = st.text_input(
+                odd_input_away = st.text_input(
                     "Odd (ex: 400 = 4,00):", 
                     value="",
-                    key=f"a_{home_team}_{away_team}",
+                    key=f"away_{home_team}_{away_team}",
                     placeholder="Ex: 400"
                 )
                 
-                if odd_input_a and odd_input_a.isdigit():
-                    odd_a = float(odd_input_a) / 100
-                    if odd_a >= 1.01:
-                        st.info(f"Odd: **{odd_a:.2f}**")
-                        ev_a = calculate_ev(markets['away_win'], odd_a)
-                        st.metric("EV", f"{ev_a*100:.1f}%", delta="✅ Valor!" if ev_a > 0 else "❌")
+                if odd_input_away and odd_input_away.isdigit():
+                    odd_away = float(odd_input_away) / 100
+                    if odd_away >= 1.01:
+                        st.info(f"Odd: **{odd_away:.2f}**")
+                        ev_away = calculate_ev(markets['away_win'], odd_away)
+                        st.metric("EV", f"{ev_away*100:.1f}%", delta="✅ Valor!" if ev_away > 0 else "❌")
                         
-                        if ev_a > 0:
+                        if ev_away > 0:
                             markets_data.append({
                                 'jogo': f"{home_team} vs {away_team}",
                                 'mercado': f'Vitória {away_team}',
                                 'prob': markets['away_win'],
-                                'odd': odd_a,
-                                'ev': ev_a,
-                                'key': 'a'
+                                'odd': odd_away,
+                                'ev': ev_away,
+                                'key': 'away'
                             })
             
             # Over/Under
             st.divider()
-            st.write("**Over/Under 2.5 Gols:**")
-            col1, col2 = st.columns(2)
+            st.markdown("### 📊 Over/Under 2.5 Gols")
+            column_over, column_under = st.columns(2)
             
-            with col1:
+            with column_over:
                 st.write("**Mais de 2.5**")
                 st.write(f"Probabilidade: {markets['over_2.5']*100:.1f}%")
-                odd_input_o = st.text_input(
+                odd_input_over = st.text_input(
                     "Odd (ex: 250 = 2,50):", 
                     value="",
-                    key=f"o_{home_team}_{away_team}",
+                    key=f"over_{home_team}_{away_team}",
                     placeholder="Ex: 250"
                 )
                 
-                if odd_input_o and odd_input_o.isdigit():
-                    odd_o = float(odd_input_o) / 100
-                    if odd_o >= 1.01:
-                        st.info(f"Odd: **{odd_o:.2f}**")
-                        ev_o = calculate_ev(markets['over_2.5'], odd_o)
-                        st.metric("EV", f"{ev_o*100:.1f}%", delta="✅ Valor!" if ev_o > 0 else "❌")
+                if odd_input_over and odd_input_over.isdigit():
+                    odd_over = float(odd_input_over) / 100
+                    if odd_over >= 1.01:
+                        st.info(f"Odd: **{odd_over:.2f}**")
+                        ev_over = calculate_ev(markets['over_2.5'], odd_over)
+                        st.metric("EV", f"{ev_over*100:.1f}%", delta="✅ Valor!" if ev_over > 0 else "❌")
                         
-                        if ev_o > 0:
+                        if ev_over > 0:
                             markets_data.append({
                                 'jogo': f"{home_team} vs {away_team}",
                                 'mercado': 'Mais de 2.5',
                                 'prob': markets['over_2.5'],
-                                'odd': odd_o,
-                                'ev': ev_o,
-                                'key': 'o'
+                                'odd': odd_over,
+                                'ev': ev_over,
+                                'key': 'over'
                             })
             
-            with col2:
+            with column_under:
                 st.write("**Menos de 2.5**")
                 st.write(f"Probabilidade: {markets['under_2.5']*100:.1f}%")
-                odd_input_u = st.text_input(
+                odd_input_under = st.text_input(
                     "Odd (ex: 180 = 1,80):", 
                     value="",
-                    key=f"u_{home_team}_{away_team}",
+                    key=f"under_{home_team}_{away_team}",
                     placeholder="Ex: 180"
                 )
                 
-                if odd_input_u and odd_input_u.isdigit():
-                    odd_u = float(odd_input_u) / 100
-                    if odd_u >= 1.01:
-                        st.info(f"Odd: **{odd_u:.2f}**")
-                        ev_u = calculate_ev(markets['under_2.5'], odd_u)
-                        st.metric("EV", f"{ev_u*100:.1f}%", delta="✅ Valor!" if ev_u > 0 else "❌")
+                if odd_input_under and odd_input_under.isdigit():
+                    odd_under = float(odd_input_under) / 100
+                    if odd_under >= 1.01:
+                        st.info(f"Odd: **{odd_under:.2f}**")
+                        ev_under = calculate_ev(markets['under_2.5'], odd_under)
+                        st.metric("EV", f"{ev_under*100:.1f}%", delta="✅ Valor!" if ev_under > 0 else "❌")
                         
-                        if ev_u > 0:
+                        if ev_under > 0:
                             markets_data.append({
                                 'jogo': f"{home_team} vs {away_team}",
                                 'mercado': 'Menos de 2.5',
                                 'prob': markets['under_2.5'],
-                                'odd': odd_u,
-                                'ev': ev_u,
-                                'key': 'u'
+                                'odd': odd_under,
+                                'ev': ev_under,
+                                'key': 'under'
                             })
             
             # Botões de adicionar
@@ -289,10 +290,10 @@ if home_team != away_team:
                 st.success(f"🎯 {len(markets_data)} apostas com EV+ identificadas")
                 
                 for market in markets_data:
-                    col1, col2 = st.columns([4, 1])
-                    with col1:
+                    column_market, column_button = st.columns([4, 1])
+                    with column_market:
                         st.write(f"**{market['mercado']}** - Odd {market['odd']:.2f} - EV +{market['ev']*100:.1f}%")
-                    with col2:
+                    with column_button:
                         if st.button("➕ Adicionar", key=f"add_{market['key']}_{home_team}_{away_team}"):
                             st.session_state.multiple_bets.append(market)
                             st.success("✅")
@@ -305,38 +306,38 @@ if len(st.session_state.multiple_bets) > 0:
     st.success(f"✅ {len(st.session_state.multiple_bets)} apostas selecionadas")
     
     # Mostrar apostas
-    for idx, bet in enumerate(st.session_state.multiple_bets):
-        col1, col2, col3, col4, col5 = st.columns([3, 2, 1, 1, 1])
-        with col1:
+    for index, bet in enumerate(st.session_state.multiple_bets):
+        column_game, column_market, column_odd, column_ev, column_delete = st.columns([3, 2, 1, 1, 1])
+        with column_game:
             st.write(f"**{bet['jogo']}**")
-        with col2:
+        with column_market:
             st.write(bet['mercado'])
-        with col3:
+        with column_odd:
             st.write(f"Odd: {bet['odd']:.2f}")
-        with col4:
+        with column_ev:
             st.write(f"EV: +{bet['ev']*100:.1f}%")
-        with col5:
-            if st.button("🗑️", key=f"del_{idx}"):
-                st.session_state.multiple_bets.pop(idx)
+        with column_delete:
+            if st.button("🗑️", key=f"delete_{index}"):
+                st.session_state.multiple_bets.pop(index)
                 st.rerun()
     
     st.divider()
     
     # Calcular múltipla
     odd_total = 1
-    prob_total = 1
+    probability_total = 1
     for bet in st.session_state.multiple_bets:
         odd_total *= bet['odd']
-        prob_total *= bet['prob']
+        probability_total *= bet['prob']
     
-    ev_multiple = calculate_ev(prob_total, odd_total)
+    ev_multiple = calculate_ev(probability_total, odd_total)
     
-    col1, col2, col3 = st.columns(3)
-    with col1:
+    column_odd_total, column_probability_total, column_ev_total = st.columns(3)
+    with column_odd_total:
         st.metric("Odd Total da Múltipla", f"{odd_total:.2f}")
-    with col2:
-        st.metric("Probabilidade Combinada", f"{prob_total*100:.2f}%")
-    with col3:
+    with column_probability_total:
+        st.metric("Probabilidade Combinada", f"{probability_total*100:.2f}%")
+    with column_ev_total:
         st.metric("EV da Múltipla", f"{ev_multiple*100:+.1f}%", delta="✅ Valor!" if ev_multiple > 0 else "⚠️ Sem valor")
     
     # Gerenciamento
@@ -353,28 +354,28 @@ if len(st.session_state.multiple_bets) > 0:
         
         st.info(f"**Investimento: R$ {stake:.2f}**")
         
-        retorno = stake * odd_total
-        lucro = retorno - stake
+        total_return = stake * odd_total
+        profit = total_return - stake
         
-        col1, col2, col3 = st.columns(3)
-        with col1:
+        column_stake, column_return, column_profit = st.columns(3)
+        with column_stake:
             st.metric("Investimento", f"R$ {stake:.2f}")
-        with col2:
-            st.metric("Retorno se Ganhar", f"R$ {retorno:.2f}")
-        with col3:
-            st.metric("Lucro Potencial", f"R$ {lucro:.2f}", delta=f"+{(lucro/stake)*100:.1f}%")
+        with column_return:
+            st.metric("Retorno se Ganhar", f"R$ {total_return:.2f}")
+        with column_profit:
+            st.metric("Lucro Potencial", f"R$ {profit:.2f}", delta=f"+{(profit/stake)*100:.1f}%")
     
     st.divider()
     
-    col1, col2 = st.columns(2)
-    with col1:
+    column_clear, column_download = st.columns(2)
+    with column_clear:
         if st.button("🗑️ Limpar Múltipla", use_container_width=True):
             st.session_state.multiple_bets = []
             st.rerun()
-    with col2:
-        df = pd.DataFrame(st.session_state.multiple_bets)
-        csv = df.to_csv(index=False)
-        st.download_button("💾 Baixar CSV", csv, "multipla_ev.csv", "text/csv", use_container_width=True)
+    with column_download:
+        dataframe_bets = pd.DataFrame(st.session_state.multiple_bets)
+        csv_data = dataframe_bets.to_csv(index=False)
+        st.download_button("💾 Baixar CSV", csv_data, "multipla_ev.csv", "text/csv", use_container_width=True)
 
 else:
     st.info("👆 Analise jogos acima e adicione apostas com EV+ à múltipla")
