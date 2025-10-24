@@ -213,6 +213,44 @@ for event in events:
 
 team_list = sorted(list(teams))
 
+# ==================== SEÇÃO 0: PRÓXIMOS JOGOS (TOPO DA PÁGINA) ====================
+
+next_matchday_games = get_next_matchday_games(events)
+
+if next_matchday_games:
+    match_date = datetime.strptime(next_matchday_games[0]['date'], "%Y-%m-%d")
+    weekday_names = {
+        0: "Segunda-feira",
+        1: "Terça-feira",
+        2: "Quarta-feira",
+        3: "Quinta-feira",
+        4: "Sexta-feira",
+        5: "Sábado",
+        6: "Domingo"
+    }
+    weekday = weekday_names[match_date.weekday()]
+    
+    st.header(f"📅 Próximos Jogos - {weekday}, {match_date.strftime('%d/%m/%Y')}")
+    st.caption(f"🔄 {len(next_matchday_games)} jogos agendados para análise")
+    
+    for game in next_matchday_games:
+        column_time, column_match, column_button = st.columns([1, 4, 1])
+        
+        with column_time:
+            st.write(f"**{game['time'][:5]}**")
+        
+        with column_match:
+            st.write(f"🏠 **{game['home']}** vs ✈️ **{game['away']}**")
+        
+        with column_button:
+            if st.button("🔍 Analisar", key=f"analyze_{game['home']}_{game['away']}", use_container_width=True):
+                st.session_state.selected_home = game['home']
+                st.session_state.selected_away = game['away']
+                st.session_state.show_analysis = True
+                st.rerun()
+    
+    st.divider()
+
 # ==================== SEÇÃO 1: ANÁLISE DE JOGO ====================
 
 st.header("⚽ Análise de Jogo")
@@ -490,44 +528,7 @@ if home_team != away_team:
                             st.session_state.multiple_bets.append(market)
                             st.success("✅")
 
-# ==================== SEÇÃO 2: PRÓXIMOS JOGOS ====================
-
-st.divider()
-next_matchday_games = get_next_matchday_games(events)
-
-if next_matchday_games:
-    match_date = datetime.strptime(next_matchday_games[0]['date'], "%Y-%m-%d")
-    weekday_names = {
-        0: "Segunda-feira",
-        1: "Terça-feira",
-        2: "Quarta-feira",
-        3: "Quinta-feira",
-        4: "Sexta-feira",
-        5: "Sábado",
-        6: "Domingo"
-    }
-    weekday = weekday_names[match_date.weekday()]
-    
-    st.header(f"📅 Próximos Jogos - {weekday}, {match_date.strftime('%d/%m/%Y')}")
-    st.caption(f"🔄 {len(next_matchday_games)} jogos agendados para análise")
-    
-    for game in next_matchday_games:
-        column_time, column_match, column_button = st.columns([1, 4, 1])
-        
-        with column_time:
-            st.write(f"**{game['time'][:5]}**")
-        
-        with column_match:
-            st.write(f"🏠 **{game['home']}** vs ✈️ **{game['away']}**")
-        
-        with column_button:
-            if st.button("🔍 Analisar", key=f"analyze_{game['home']}_{game['away']}", use_container_width=True):
-                st.session_state.selected_home = game['home']
-                st.session_state.selected_away = game['away']
-                st.session_state.show_analysis = True
-                st.rerun()
-
-# ==================== SEÇÃO 3: GESTÃO DE BANCA INTELIGENTE ====================
+# ==================== SEÇÃO 2: GESTÃO DE BANCA INTELIGENTE ====================
 
 st.divider()
 st.header("💰 Gestão de Banca Inteligente")
