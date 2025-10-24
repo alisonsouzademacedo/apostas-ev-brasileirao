@@ -3,6 +3,7 @@ import pandas as pd
 import requests
 import math
 from datetime import datetime, timedelta
+from bs4 import BeautifulSoup
 
 st.set_page_config(page_title="Sistema EV+ - Brasileirão 2025", page_icon="⚽", layout="wide")
 st.title('⚽ Sistema de Análise de Valor (EV+) - Brasileirão 2025')
@@ -111,81 +112,52 @@ def get_season_results():
     return None, "Erro ao carregar dados", None
 
 @st.cache_data(ttl=1800)
-def get_next_round_games_debug():
-    """Busca próximos jogos com DEBUG detalhado"""
-    debug_info = {
-        'status': 'iniciado',
-        'url': '',
-        'status_code': 0,
-        'response_preview': '',
-        'error': None,
-        'games_found': 0
-    }
-    
+def get_upcoming_matches_thesportsdb():
+    """Busca próximos jogos usando TheSportsDB - endpoint NEXT"""
     try:
-        url = "https://api.api-futebol.com.br/v1/campeonatos/10/rodadas"
-        debug_info['url'] = url
-        
-        headers = {
-            "Authorization": "Bearer test_a8c37778328495ac24c5d0d3c3923b"
-        }
-        
-        response = requests.get(url, headers=headers, timeout=10)
-        debug_info['status_code'] = response.status_code
-        debug_info['response_preview'] = str(response.text)[:500]
+        url = f"{API_BASE}/eventsnextleague.php?id={LEAGUE_ID}"
+        response = requests.get(url, timeout=10)
         
         if response.status_code == 200:
             data = response.json()
-            debug_info['status'] = 'sucesso'
             
-            if not data:
-                debug_info['status'] = 'vazio'
-                return [], debug_info
+            if not data or not data.get('events'):
+                return []
             
             now = datetime.now()
-            future_games = []
+            games = []
             
-            for rodada in data:
-                if rodada.get('partidas'):
-                    for partida in rodada['partidas']:
-                        if partida.get('data_realizacao'):
-                            try:
-                                game_datetime_str = partida['data_realizacao']
-                                game_datetime = datetime.fromisoformat(game_datetime_str.replace('Z', '+00:00'))
-                                
-                                placar = partida.get('placar')
-                                
-                                if game_datetime > now and not placar:
-                                    future_games.append({
-                                        'datetime': game_datetime,
-                                        'date': game_datetime.strftime('%Y-%m-%d'),
-                                        'time': game_datetime.strftime('%H:%M'),
-                                        'home': partida.get('time_mandante', {}).get('nome_popular', 'N/A'),
-                                        'away': partida.get('time_visitante', {}).get('nome_popular', 'N/A'),
-                                        'round': rodada.get('nome', 'Rodada')
-                                    })
-                            except Exception as e:
-                                debug_info['error'] = f"Erro ao processar partida: {str(e)}"
-                                continue
+            for event in data['events']:
+                if not event.get('dateEvent') or not event.get('strTime'):
+                    continue
+                
+                try:
+                    match_datetime_str = f"{event['dateEvent']} {event['strTime']}"
+                    match_datetime = datetime.strptime(match_datetime_str, "%Y-%m-%d %H:%M:%S")
+                    
+                    if match_datetime > now:
+                        games.append({
+                            'datetime': match_datetime,
+                            'date': event['dateEvent'],
+                            'time': event['strTime'][:5],
+                            'home': event.get('strHomeTeam', 'N/A'),
+                            'away': event.get('strAwayTeam', 'N/A'),
+                            'round': event.get('intRound', 'Rodada')
+                        })
+                except:
+                    continue
             
-            debug_info['games_found'] = len(future_games)
+            if not games:
+                return []
             
-            if not future_games:
-                return [], debug_info
+            games.sort(key=lambda x: x['datetime'])
+            next_date = games[0]['date']
+            next_day_games = [game for game in games if game['date'] == next_date]
             
-            future_games.sort(key=lambda x: x['datetime'])
-            next_date = future_games[0]['date']
-            next_day_games = [game for game in future_games if game['date'] == next_date]
-            
-            return next_day_games[:10], debug_info
-        else:
-            debug_info['status'] = f'erro_{response.status_code}'
-            return [], debug_info
+            return next_day_games[:10]
             
     except Exception as e:
-        debug_info['status'] = 'exception'
-        debug_info['error'] = str(e)
-        return [], debug_info
+        return []
 
 def process_team_stats(events, team_name, venue='home'):
     games = []
@@ -248,32 +220,12 @@ for event in events:
 
 team_list = sorted(list(teams))
 
-# ==================== DEBUG: API FUTEBOL BR ====================
-
-st.header("🔍 DEBUG - API Futebol BR")
-
-next_round_games, debug_info = get_next_round_games_debug()
-
-col1, col2, col3 = st.columns(3)
-with col1:
-    st.metric("Status", debug_info['status'])
-with col2:
-    st.metric("Status Code", debug_info['status_code'])
-with col3:
-    st.metric("Jogos Encontrados", debug_info['games_found'])
-
-with st.expander("📋 Detalhes da Requisição"):
-    st.write(f"**URL:** {debug_info['url']}")
-    st.write(f"**Erro:** {debug_info.get('error', 'Nenhum')}")
-    st.write(f"**Preview da Resposta:**")
-    st.code(debug_info['response_preview'])
-
-st.divider()
-
 # ==================== SEÇÃO 0: PRÓXIMOS JOGOS ====================
 
-if next_round_games:
-    match_date = datetime.strptime(next_round_games[0]['date'], "%Y-%m-%d")
+upcoming_games = get_upcoming_matches_thesportsdb()
+
+if upcoming_games:
+    match_date = datetime.strptime(upcoming_games[0]['date'], "%Y-%m-%d")
     weekday_names = {
         0: "Segunda-feira",
         1: "Terça-feira",
@@ -286,9 +238,9 @@ if next_round_games:
     weekday = weekday_names[match_date.weekday()]
     
     st.header(f"📅 Próximos Jogos - {weekday}, {match_date.strftime('%d/%m/%Y')}")
-    st.caption(f"⚽ {len(next_round_games)} jogos agendados | {next_round_games[0].get('round', 'Rodada')}")
+    st.caption(f"⚽ {len(upcoming_games)} jogos agendados")
     
-    for game in next_round_games:
+    for game in upcoming_games:
         column_time, column_match, column_button = st.columns([1, 4, 1])
         
         with column_time:
