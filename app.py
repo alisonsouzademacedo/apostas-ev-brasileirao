@@ -2,17 +2,20 @@ import streamlit as st
 import pandas as pd
 import requests
 import math
+from datetime import datetime
 
 st.set_page_config(page_title="Sistema EV+ - Brasileirão 2025", page_icon="⚽", layout="wide")
 st.title('⚽ Sistema de Análise de Valor (EV+) - Brasileirão 2025')
 
 # --- FUNÇÕES MATEMÁTICAS ---
 def poisson_probability(k, lambda_value):
+    """Calcula a probabilidade de Poisson"""
     if lambda_value <= 0:
         lambda_value = 0.5
     return (lambda_value ** k * math.exp(-lambda_value)) / math.factorial(k)
 
 def calculate_match_probabilities(home_expected_goals, away_expected_goals, max_goals=7):
+    """Calcula matriz de probabilidades de placares usando Poisson"""
     probability_matrix = []
     for home_goals in range(max_goals + 1):
         for away_goals in range(max_goals + 1):
@@ -21,6 +24,7 @@ def calculate_match_probabilities(home_expected_goals, away_expected_goals, max_
     return probability_matrix
 
 def calculate_markets(probability_matrix):
+    """Calcula probabilidades de mercados de apostas"""
     markets = {}
     markets['home_win'] = sum(probability['probability'] for probability in probability_matrix if probability['home_goals'] > probability['away_goals'])
     markets['draw'] = sum(probability['probability'] for probability in probability_matrix if probability['home_goals'] == probability['away_goals'])
@@ -32,6 +36,7 @@ def calculate_markets(probability_matrix):
     return markets
 
 def calculate_ev(probability, odd):
+    """Calcula o Valor Esperado (EV)"""
     return (probability * odd) - 1 if odd > 0 else 0
 
 def calculate_kelly_criterion(probability, odd):
@@ -42,28 +47,25 @@ def calculate_kelly_criterion(probability, odd):
     return max(0, min(kelly, 0.25))
 
 def classify_bet(probability, odd, ev):
-    """Classifica a aposta em categorias"""
+    """Classifica a aposta em categorias para gestão de banca"""
     if ev >= 0.10 and probability >= 0.40 and 1.50 <= odd <= 4.00:
-        return "simple_high"  # Aposta simples com alto valor
+        return "simple_high"
     elif ev >= 0.15 and odd >= 5.00:
-        return "high_risk"  # High-risk / Tiro alto
+        return "high_risk"
     elif 0.05 <= ev <= 0.15 and probability >= 0.30:
-        return "multiple"  # Boa para múltipla
+        return "multiple"
     elif ev > 0:
-        return "simple_low"  # Aposta simples com valor baixo
+        return "simple_low"
     else:
-        return "no_value"  # Sem valor
+        return "no_value"
 
 def calculate_bankroll_distribution(total_bankroll, bets, risk_profile="balanced"):
     """Calcula distribuição da banca baseada no perfil de risco"""
-    
-    # Classificar apostas
     simple_high_bets = [bet for bet in bets if classify_bet(bet['prob'], bet['odd'], bet['ev']) == "simple_high"]
     multiple_bets = [bet for bet in bets if classify_bet(bet['prob'], bet['odd'], bet['ev']) == "multiple"]
     high_risk_bets = [bet for bet in bets if classify_bet(bet['prob'], bet['odd'], bet['ev']) == "high_risk"]
     simple_low_bets = [bet for bet in bets if classify_bet(bet['prob'], bet['odd'], bet['ev']) == "simple_low"]
     
-    # Definir percentuais por perfil
     profiles = {
         "conservative": {"simple": 0.60, "multiple": 0.30, "high_risk": 0.10},
         "balanced": {"simple": 0.50, "multiple": 0.35, "high_risk": 0.15},
@@ -72,7 +74,6 @@ def calculate_bankroll_distribution(total_bankroll, bets, risk_profile="balanced
     
     profile = profiles[risk_profile]
     
-    # Calcular valores
     simple_budget = total_bankroll * profile["simple"]
     multiple_budget = total_bankroll * profile["multiple"]
     high_risk_budget = total_bankroll * profile["high_risk"]
@@ -97,6 +98,7 @@ LEAGUE_ID = "4351"
 
 @st.cache_data(ttl=3600)
 def get_season_results():
+    """Busca todos os resultados da temporada"""
     season_formats = ["2025", "2024-2025"]
     for season in season_formats:
         url = f"{API_BASE}/eventsseason.php?id={LEAGUE_ID}&s={season}"
@@ -110,7 +112,35 @@ def get_season_results():
             continue
     return None, "Erro ao carregar dados", None
 
+def get_upcoming_matches(events):
+    """Filtra jogos futuros"""
+    upcoming = []
+    now = datetime.now()
+    
+    for event in events:
+        if not event.get('dateEvent') or not event.get('strTime'):
+            continue
+        
+        try:
+            match_datetime_str = f"{event['dateEvent']} {event['strTime']}"
+            match_datetime = datetime.strptime(match_datetime_str, "%Y-%m-%d %H:%M:%S")
+            
+            if match_datetime > now and not event.get('intHomeScore'):
+                upcoming.append({
+                    'date': event['dateEvent'],
+                    'time': event['strTime'],
+                    'home': event['strHomeTeam'],
+                    'away': event['strAwayTeam'],
+                    'datetime': match_datetime
+                })
+        except:
+            continue
+    
+    upcoming.sort(key=lambda x: x['datetime'])
+    return upcoming[:10]
+
 def process_team_stats(events, team_name, venue='home'):
+    """Processa estatísticas de um time"""
     games = []
     for event in events:
         if not event.get('intHomeScore') or not event.get('intAwayScore'):
@@ -156,9 +186,32 @@ for event in events:
 
 team_list = sorted(list(teams))
 
+# --- SEÇÃO 0: PRÓXIMOS JOGOS ---
+upcoming_matches = get_upcoming_matches(events)
+
+if upcoming_matches:
+    with st.expander("📅 Próximos Jogos da Rodada", expanded=False):
+        st.caption(f"🔄 Próximos {len(upcoming_matches)} jogos agendados")
+        
+        for match in upcoming_matches:
+            column_date, column_match, column_analyze = st.columns([1, 3, 1])
+            
+            with column_date:
+                match_date = datetime.strptime(match['date'], "%Y-%m-%d")
+                st.write(f"**{match_date.strftime('%d/%m')}**")
+                st.caption(match['time'][:5])
+            
+            with column_match:
+                st.write(f"🏠 **{match['home']}** vs ✈️ **{match['away']}**")
+            
+            with column_analyze:
+                if st.button("🔍", key=f"quick_{match['home']}_{match['away']}", help="Analisar este jogo"):
+                    st.session_state.show_analysis = True
+                    st.rerun()
+
 # --- SEÇÃO 1: ANÁLISE DE JOGO ---
 st.header("⚽ Análise de Jogo")
-st.caption(f"✅ {completed_games} jogos | {len(team_list)} times | Temporada {season_used}")
+st.caption(f"✅ {completed_games} jogos completos | {len(team_list)} times | Temporada {season_used}")
 
 column_home, column_away = st.columns(2)
 with column_home:
@@ -428,7 +481,6 @@ st.header("💰 Gestão de Banca Inteligente")
 
 if len(st.session_state.multiple_bets) > 0:
     
-    # Input de banca
     bankroll_input = st.text_input(
         "💵 Banca Total Disponível (em centavos - ex: 10000 = R$ 100,00):",
         value="",
@@ -441,7 +493,6 @@ if len(st.session_state.multiple_bets) > 0:
         
         st.info(f"**Banca Total: R$ {total_bankroll:.2f}**")
         
-        # Escolher perfil de risco
         st.subheader("📈 Escolha seu Perfil de Risco")
         risk_profile = st.radio(
             "Perfil:",
@@ -454,15 +505,12 @@ if len(st.session_state.multiple_bets) > 0:
             horizontal=True
         )
         
-        # Calcular distribuição
         recommendations = calculate_bankroll_distribution(total_bankroll, st.session_state.multiple_bets, risk_profile)
         
         st.divider()
         
-        # Mostrar recomendações
         st.markdown("### 🎯 Recomendação de Investimento")
         
-        # Apostas Simples de Alto Valor
         if recommendations['simple_high'] or recommendations['simple_low']:
             st.markdown("#### ⭐ Apostas Simples")
             simple_budget = recommendations['budgets']['simple_total']
@@ -473,7 +521,8 @@ if len(st.session_state.multiple_bets) > 0:
                 
                 for bet in all_simple:
                     kelly = calculate_kelly_criterion(bet['prob'], bet['odd'])
-                    stake = simple_budget * (kelly / sum(calculate_kelly_criterion(b['prob'], b['odd']) for b in all_simple))
+                    total_kelly = sum(calculate_kelly_criterion(b['prob'], b['odd']) for b in all_simple)
+                    stake = simple_budget * (kelly / total_kelly) if total_kelly > 0 else simple_budget / len(all_simple)
                     
                     col1, col2, col3 = st.columns([3, 1, 1])
                     with col1:
@@ -483,7 +532,6 @@ if len(st.session_state.multiple_bets) > 0:
                     with col3:
                         st.write(f"**R$ {stake:.2f}**")
         
-        # Múltiplas
         if recommendations['multiple']:
             st.markdown("#### 🔗 Apostas para Múltipla")
             multiple_budget = recommendations['budgets']['multiple_total']
@@ -498,7 +546,6 @@ if len(st.session_state.multiple_bets) > 0:
                 with col2:
                     st.write(f"Prob: {bet['prob']*100:.1f}%")
             
-            # Exemplo de múltipla
             if len(recommendations['multiple']) >= 2:
                 example_multiple = recommendations['multiple'][:min(4, len(recommendations['multiple']))]
                 odd_multiple = 1
@@ -510,7 +557,6 @@ if len(st.session_state.multiple_bets) > 0:
                 st.write(f"**Exemplo:** {len(example_multiple)} apostas → Odd {odd_multiple:.2f} → Investir R$ {multiple_budget:.2f}")
                 st.write(f"Retorno potencial: R$ {multiple_budget * odd_multiple:.2f}")
         
-        # High-Risk
         if recommendations['high_risk']:
             st.markdown("#### 🎲 Apostas High-Risk (Tiro Alto)")
             high_risk_budget = recommendations['budgets']['high_risk_total']
@@ -531,7 +577,6 @@ if len(st.session_state.multiple_bets) > 0:
         
         st.divider()
         
-        # Resumo
         st.markdown("### 📊 Resumo da Estratégia")
         
         total_recommended = recommendations['budgets']['simple_total'] + recommendations['budgets']['multiple_total'] + recommendations['budgets']['high_risk_total']
@@ -551,7 +596,6 @@ if len(st.session_state.multiple_bets) > 0:
     
     st.divider()
     
-    # Mostrar todas as apostas selecionadas
     st.subheader("📋 Suas Apostas Selecionadas")
     
     for index, bet in enumerate(st.session_state.multiple_bets):
