@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import requests
 import math
-from datetime import datetime
+from datetime import datetime, timedelta
 
 st.set_page_config(page_title="Sistema EV+ - Brasileirão 2025", page_icon="⚽", layout="wide")
 st.title('⚽ Sistema de Análise de Valor (EV+) - Brasileirão 2025')
@@ -112,10 +112,10 @@ def get_season_results():
             continue
     return None, "Erro ao carregar dados", None
 
-def get_upcoming_matches(events):
-    """Filtra jogos futuros"""
-    upcoming = []
+def get_next_matchday_games(events):
+    """Retorna jogos do próximo dia com partidas"""
     now = datetime.now()
+    future_games = []
     
     for event in events:
         if not event.get('dateEvent') or not event.get('strTime'):
@@ -126,7 +126,7 @@ def get_upcoming_matches(events):
             match_datetime = datetime.strptime(match_datetime_str, "%Y-%m-%d %H:%M:%S")
             
             if match_datetime > now and not event.get('intHomeScore'):
-                upcoming.append({
+                future_games.append({
                     'date': event['dateEvent'],
                     'time': event['strTime'],
                     'home': event['strHomeTeam'],
@@ -136,8 +136,16 @@ def get_upcoming_matches(events):
         except:
             continue
     
-    upcoming.sort(key=lambda x: x['datetime'])
-    return upcoming[:10]
+    if not future_games:
+        return []
+    
+    future_games.sort(key=lambda x: x['datetime'])
+    
+    next_matchday_date = future_games[0]['date']
+    
+    next_matchday_games = [game for game in future_games if game['date'] == next_matchday_date]
+    
+    return next_matchday_games
 
 def process_team_stats(events, team_name, venue='home'):
     """Processa estatísticas de um time"""
@@ -165,6 +173,10 @@ if 'multiple_bets' not in st.session_state:
     st.session_state.multiple_bets = []
 if 'show_analysis' not in st.session_state:
     st.session_state.show_analysis = False
+if 'selected_home' not in st.session_state:
+    st.session_state.selected_home = None
+if 'selected_away' not in st.session_state:
+    st.session_state.selected_away = None
 
 # --- CARREGAR DADOS ---
 with st.spinner("🔄 Carregando dados..."):
@@ -186,28 +198,42 @@ for event in events:
 
 team_list = sorted(list(teams))
 
-# --- SEÇÃO 0: PRÓXIMOS JOGOS ---
-upcoming_matches = get_upcoming_matches(events)
+# --- SEÇÃO 0: PRÓXIMA RODADA ---
+next_matchday_games = get_next_matchday_games(events)
 
-if upcoming_matches:
-    with st.expander("📅 Próximos Jogos da Rodada", expanded=False):
-        st.caption(f"🔄 Próximos {len(upcoming_matches)} jogos agendados")
+if next_matchday_games:
+    match_date = datetime.strptime(next_matchday_games[0]['date'], "%Y-%m-%d")
+    weekday_names = {
+        0: "Segunda-feira",
+        1: "Terça-feira",
+        2: "Quarta-feira",
+        3: "Quinta-feira",
+        4: "Sexta-feira",
+        5: "Sábado",
+        6: "Domingo"
+    }
+    weekday = weekday_names[match_date.weekday()]
+    
+    st.header(f"📅 Próxima Rodada - {weekday}, {match_date.strftime('%d/%m/%Y')}")
+    st.caption(f"🔄 {len(next_matchday_games)} jogos agendados")
+    
+    for game in next_matchday_games:
+        column_time, column_match, column_button = st.columns([1, 4, 1])
         
-        for match in upcoming_matches:
-            column_date, column_match, column_analyze = st.columns([1, 3, 1])
-            
-            with column_date:
-                match_date = datetime.strptime(match['date'], "%Y-%m-%d")
-                st.write(f"**{match_date.strftime('%d/%m')}**")
-                st.caption(match['time'][:5])
-            
-            with column_match:
-                st.write(f"🏠 **{match['home']}** vs ✈️ **{match['away']}**")
-            
-            with column_analyze:
-                if st.button("🔍", key=f"quick_{match['home']}_{match['away']}", help="Analisar este jogo"):
-                    st.session_state.show_analysis = True
-                    st.rerun()
+        with column_time:
+            st.write(f"**{game['time'][:5]}**")
+        
+        with column_match:
+            st.write(f"🏠 **{game['home']}** vs ✈️ **{game['away']}**")
+        
+        with column_button:
+            if st.button("🔍 Analisar", key=f"analyze_{game['home']}_{game['away']}", use_container_width=True):
+                st.session_state.selected_home = game['home']
+                st.session_state.selected_away = game['away']
+                st.session_state.show_analysis = True
+                st.rerun()
+    
+    st.divider()
 
 # --- SEÇÃO 1: ANÁLISE DE JOGO ---
 st.header("⚽ Análise de Jogo")
@@ -215,9 +241,11 @@ st.caption(f"✅ {completed_games} jogos completos | {len(team_list)} times | Te
 
 column_home, column_away = st.columns(2)
 with column_home:
-    home_team = st.selectbox('🏠 Time da Casa', team_list, index=0)
+    home_team_index = team_list.index(st.session_state.selected_home) if st.session_state.selected_home in team_list else 0
+    home_team = st.selectbox('🏠 Time da Casa', team_list, index=home_team_index)
 with column_away:
-    away_team = st.selectbox('✈️ Time Visitante', team_list, index=1)
+    away_team_index = team_list.index(st.session_state.selected_away) if st.session_state.selected_away in team_list else 1
+    away_team = st.selectbox('✈️ Time Visitante', team_list, index=away_team_index)
 
 if home_team != away_team:
     if st.button("🔍 ANALISAR JOGO", type="primary", use_container_width=True):
