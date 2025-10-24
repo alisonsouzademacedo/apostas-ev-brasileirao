@@ -110,54 +110,6 @@ def get_season_results():
             continue
     return None, "Erro ao carregar dados", None
 
-@st.cache_data(ttl=1800)
-def get_upcoming_matches_thesportsdb():
-    """Busca próximos jogos usando TheSportsDB"""
-    try:
-        url = f"{API_BASE}/eventsnextleague.php?id={LEAGUE_ID}"
-        response = requests.get(url, timeout=10)
-        
-        if response.status_code == 200:
-            data = response.json()
-            
-            if not data or not data.get('events'):
-                return []
-            
-            now = datetime.now()
-            games = []
-            
-            for event in data['events']:
-                if not event.get('dateEvent') or not event.get('strTime'):
-                    continue
-                
-                try:
-                    match_datetime_str = f"{event['dateEvent']} {event['strTime']}"
-                    match_datetime = datetime.strptime(match_datetime_str, "%Y-%m-%d %H:%M:%S")
-                    
-                    if match_datetime > now:
-                        games.append({
-                            'datetime': match_datetime,
-                            'date': event['dateEvent'],
-                            'time': event['strTime'][:5],
-                            'home': event.get('strHomeTeam', 'N/A'),
-                            'away': event.get('strAwayTeam', 'N/A'),
-                            'round': event.get('intRound', 'Rodada')
-                        })
-                except:
-                    continue
-            
-            if not games:
-                return []
-            
-            games.sort(key=lambda x: x['datetime'])
-            next_date = games[0]['date']
-            next_day_games = [game for game in games if game['date'] == next_date]
-            
-            return next_day_games[:10]
-            
-    except Exception as e:
-        return []
-
 def process_team_stats(events, team_name, venue='home'):
     games = []
     for event in events:
@@ -218,44 +170,6 @@ for event in events:
         teams.add(event['strAwayTeam'])
 
 team_list = sorted(list(teams))
-
-# ==================== SEÇÃO 0: PRÓXIMOS JOGOS ====================
-
-upcoming_games = get_upcoming_matches_thesportsdb()
-
-if upcoming_games:
-    match_date = datetime.strptime(upcoming_games[0]['date'], "%Y-%m-%d")
-    weekday_names = {
-        0: "Segunda-feira",
-        1: "Terça-feira",
-        2: "Quarta-feira",
-        3: "Quinta-feira",
-        4: "Sexta-feira",
-        5: "Sábado",
-        6: "Domingo"
-    }
-    weekday = weekday_names[match_date.weekday()]
-    
-    st.header(f"📅 Próximos Jogos - {weekday}, {match_date.strftime('%d/%m/%Y')}")
-    st.caption(f"⚽ {len(upcoming_games)} jogos agendados")
-    
-    for game in upcoming_games:
-        column_time, column_match, column_button = st.columns([1, 4, 1])
-        
-        with column_time:
-            st.write(f"**{game['time']}**")
-        
-        with column_match:
-            st.write(f"🏠 **{game['home']}** vs ✈️ **{game['away']}**")
-        
-        with column_button:
-            if st.button("🔍", key=f"analyze_{game['home']}_{game['away']}", help="Analisar confronto", use_container_width=True):
-                st.session_state.selected_home = game['home']
-                st.session_state.selected_away = game['away']
-                st.session_state.show_analysis = True
-                st.rerun()
-    
-    st.divider()
 
 # ==================== SEÇÃO 1: ANÁLISE DE JOGO ====================
 
