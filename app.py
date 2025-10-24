@@ -110,7 +110,11 @@ def get_season_results():
             continue
     return None, "Erro ao carregar dados", None
 
-def process_team_stats(events, team_name, venue='home'):
+def process_team_stats(events, team_name, venue='home', use_recent=True):
+    """
+    Processa estatísticas com ponderação de jogos recentes
+    use_recent=True: Últimos 5 jogos têm peso 70%, restante 30%
+    """
     games = []
     for event in events:
         if not event.get('intHomeScore') or not event.get('intAwayScore'):
@@ -136,10 +140,30 @@ def process_team_stats(events, team_name, venue='home'):
     
     games.sort(key=lambda x: x['date'], reverse=True)
     
+    if use_recent and len(games) >= 5:
+        recent_5 = games[:5]
+        older = games[5:]
+        
+        recent_scored_avg = sum(g['scored'] for g in recent_5) / len(recent_5)
+        recent_conceded_avg = sum(g['conceded'] for g in recent_5) / len(recent_5)
+        
+        if older:
+            older_scored_avg = sum(g['scored'] for g in older) / len(older)
+            older_conceded_avg = sum(g['conceded'] for g in older) / len(older)
+            
+            scored_average = (recent_scored_avg * 0.7) + (older_scored_avg * 0.3)
+            conceded_average = (recent_conceded_avg * 0.7) + (older_conceded_avg * 0.3)
+        else:
+            scored_average = recent_scored_avg
+            conceded_average = recent_conceded_avg
+    else:
+        scored_average = sum(game['scored'] for game in games) / len(games)
+        conceded_average = sum(game['conceded'] for game in games) / len(games)
+    
     return {
         'games': len(games),
-        'scored_average': sum(game['scored'] for game in games) / len(games),
-        'conceded_average': sum(game['conceded'] for game in games) / len(games),
+        'scored_average': scored_average,
+        'conceded_average': conceded_average,
         'last_5': games[:5] if len(games) >= 5 else games
     }
 
@@ -168,6 +192,48 @@ def get_head_to_head(events, home_team, away_team):
     h2h.sort(key=lambda x: x['date'], reverse=True)
     return h2h[:5]
 
+def adjust_probability_with_h2h(base_prob_home, base_prob_draw, base_prob_away, h2h_data, home_team):
+    """
+    Ajusta probabilidades baseado em confrontos diretos
+    Peso: 15% H2H, 85% estatísticas gerais
+    """
+    if not h2h_data or len(h2h_data) < 2:
+        return base_prob_home, base_prob_draw, base_prob_away
+    
+    h2h_home_wins = 0
+    h2h_draws = 0
+    h2h_away_wins = 0
+    
+    for match in h2h_data:
+        if match['score_home'] > match['score_away']:
+            if match['home'] == home_team:
+                h2h_home_wins += 1
+            else:
+                h2h_away_wins += 1
+        elif match['score_home'] < match['score_away']:
+            if match['away'] == home_team:
+                h2h_home_wins += 1
+            else:
+                h2h_away_wins += 1
+        else:
+            h2h_draws += 1
+    
+    total_h2h = len(h2h_data)
+    h2h_prob_home = h2h_home_wins / total_h2h
+    h2h_prob_draw = h2h_draws / total_h2h
+    h2h_prob_away = h2h_away_wins / total_h2h
+    
+    adjusted_home = (base_prob_home * 0.85) + (h2h_prob_home * 0.15)
+    adjusted_draw = (base_prob_draw * 0.85) + (h2h_prob_draw * 0.15)
+    adjusted_away = (base_prob_away * 0.85) + (h2h_prob_away * 0.15)
+    
+    total = adjusted_home + adjusted_draw + adjusted_away
+    adjusted_home /= total
+    adjusted_draw /= total
+    adjusted_away /= total
+    
+    return adjusted_home, adjusted_draw, adjusted_away
+
 # ==================== GERENCIAMENTO DE APOSTAS ====================
 
 def load_bets_history():
@@ -181,8 +247,16 @@ def save_bet_to_history(bet_data):
     if 'bets_history' not in st.session_state:
         st.session_state.bets_history = []
     
+    bet_data['id'] = len(st.session_state.bets_history)
     bet_data['timestamp'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     st.session_state.bets_history.append(bet_data)
+
+def update_bet_status(bet_id, new_status):
+    """Atualiza status de uma aposta"""
+    for bet in st.session_state.bets_history:
+        if bet.get('id') == bet_id:
+            bet['status'] = new_status
+            break
 
 def calculate_roi():
     """Calcula ROI das apostas finalizadas"""
@@ -270,14 +344,15 @@ with tab1:
             st.session_state.show_analysis = True
         
         if st.session_state.show_analysis:
-            home_statistics = process_team_stats(events, home_team, 'home')
-            away_statistics = process_team_stats(events, away_team, 'away')
+            home_statistics = process_team_stats(events, home_team, 'home', use_recent=True)
+            away_statistics = process_team_stats(events, away_team, 'away', use_recent=True)
             
             if home_statistics and away_statistics:
                 expected_home_goals = (home_statistics['scored_average'] + away_statistics['conceded_average']) / 2
                 expected_away_goals = (away_statistics['scored_average'] + home_statistics['conceded_average']) / 2
                 
                 st.success(f"**{home_team}** vs **{away_team}**")
+                st.caption("📊 Probabilidades ajustadas com últimos 5 jogos (peso 70%) + confrontos diretos (peso 15%)")
                 
                 column_home_metric, column_away_metric, column_total_metric = st.columns(3)
                 with column_home_metric:
@@ -287,7 +362,7 @@ with tab1:
                 with column_total_metric:
                     st.metric("Total", f"{expected_home_goals + expected_away_goals:.2f} gols")
                 
-                # ===== NOVA SEÇÃO: TENDÊNCIAS =====
+                # ===== ANÁLISE DE TENDÊNCIAS =====
                 with st.expander("📊 Análise de Tendências", expanded=False):
                     col_h2h, col_form = st.columns(2)
                     
@@ -323,6 +398,16 @@ with tab1:
                 
                 probability_matrix = calculate_match_probabilities(expected_home_goals, expected_away_goals)
                 markets = calculate_markets(probability_matrix)
+                
+                # AJUSTAR PROBABILIDADES COM H2H
+                h2h_data = get_head_to_head(events, home_team, away_team)
+                markets['home_win'], markets['draw'], markets['away_win'] = adjust_probability_with_h2h(
+                    markets['home_win'], 
+                    markets['draw'], 
+                    markets['away_win'],
+                    h2h_data,
+                    home_team
+                )
                 
                 st.divider()
                 st.subheader("💡 Insira as Odds")
@@ -369,7 +454,9 @@ with tab1:
                                     'odd': odd_home,
                                     'ev': ev_home,
                                     'classification': classification,
-                                    'key': 'home'
+                                    'key': 'home',
+                                    'stake': 0,
+                                    'status': 'pendente'
                                 })
                 
                 with column_draw_result:
@@ -408,7 +495,9 @@ with tab1:
                                     'odd': odd_draw,
                                     'ev': ev_draw,
                                     'classification': classification,
-                                    'key': 'draw'
+                                    'key': 'draw',
+                                    'stake': 0,
+                                    'status': 'pendente'
                                 })
                 
                 with column_away_result:
@@ -447,7 +536,9 @@ with tab1:
                                     'odd': odd_away,
                                     'ev': ev_away,
                                     'classification': classification,
-                                    'key': 'away'
+                                    'key': 'away',
+                                    'stake': 0,
+                                    'status': 'pendente'
                                 })
                 
                 st.divider()
@@ -490,7 +581,9 @@ with tab1:
                                     'odd': odd_over,
                                     'ev': ev_over,
                                     'classification': classification,
-                                    'key': 'over'
+                                    'key': 'over',
+                                    'stake': 0,
+                                    'status': 'pendente'
                                 })
                 
                 with column_under:
@@ -529,10 +622,12 @@ with tab1:
                                     'odd': odd_under,
                                     'ev': ev_under,
                                     'classification': classification,
-                                    'key': 'under'
+                                    'key': 'under',
+                                    'stake': 0,
+                                    'status': 'pendente'
                                 })
                 
-                # ===== NOVA SEÇÃO: BTTS =====
+                # ===== BTTS =====
                 st.divider()
                 st.markdown("### ⚽ Ambas Marcam (BTTS)")
                 column_btts_yes, column_btts_no = st.columns(2)
@@ -573,7 +668,9 @@ with tab1:
                                     'odd': odd_btts_yes,
                                     'ev': ev_btts_yes,
                                     'classification': classification,
-                                    'key': 'btts_yes'
+                                    'key': 'btts_yes',
+                                    'stake': 0,
+                                    'status': 'pendente'
                                 })
                 
                 with column_btts_no:
@@ -612,7 +709,9 @@ with tab1:
                                     'odd': odd_btts_no,
                                     'ev': ev_btts_no,
                                     'classification': classification,
-                                    'key': 'btts_no'
+                                    'key': 'btts_no',
+                                    'stake': 0,
+                                    'status': 'pendente'
                                 })
                 
                 if markets_data:
@@ -620,7 +719,7 @@ with tab1:
                     st.success(f"🎯 {len(markets_data)} apostas com EV+ identificadas")
                     
                     for market in markets_data:
-                        column_market, column_button = st.columns([4, 1])
+                        column_market, column_button_add, column_button_save = st.columns([3, 1, 1])
                         with column_market:
                             classification_emoji = {
                                 "simple_high": "⭐",
@@ -630,10 +729,14 @@ with tab1:
                             }
                             emoji = classification_emoji.get(market['classification'], "")
                             st.write(f"{emoji} **{market['mercado']}** - Odd {market['odd']:.2f} - EV +{market['ev']*100:.1f}%")
-                        with column_button:
-                            if st.button("➕", key=f"add_{market['key']}_{home_team}_{away_team}"):
+                        with column_button_add:
+                            if st.button("➕ Lista", key=f"add_{market['key']}_{home_team}_{away_team}"):
                                 st.session_state.multiple_bets.append(market)
                                 st.success("✅")
+                        with column_button_save:
+                            if st.button("💾 Dashboard", key=f"save_{market['key']}_{home_team}_{away_team}"):
+                                save_bet_to_history(market.copy())
+                                st.success("✅ Salva!")
 
     # ==================== GESTÃO DE BANCA ====================
 
@@ -854,7 +957,7 @@ with tab2:
         
         for index, bet in enumerate(st.session_state.bets_history):
             with st.expander(f"{bet['timestamp']} | {bet['jogo']} - {bet['mercado']}"):
-                col1, col2, col3, col4, col5 = st.columns([2, 1, 1, 1, 1])
+                col1, col2, col3, col4, col5, col6 = st.columns([2, 1, 1, 1, 1, 1])
                 with col1:
                     st.write(f"**Jogo:** {bet['jogo']}")
                     st.write(f"**Mercado:** {bet['mercado']}")
@@ -866,6 +969,14 @@ with tab2:
                     status_emoji = {"pendente": "⏳", "ganhou": "✅", "perdeu": "❌"}
                     st.write(f"**Status:** {status_emoji.get(bet['status'])} {bet['status'].capitalize()}")
                 with col5:
+                    new_status = st.selectbox("Mudar para:", ["pendente", "ganhou", "perdeu"], 
+                                             index=["pendente", "ganhou", "perdeu"].index(bet['status']),
+                                             key=f"status_change_{bet.get('id', index)}")
+                    if st.button("✅ Atualizar", key=f"update_{bet.get('id', index)}"):
+                        update_bet_status(bet.get('id', index), new_status)
+                        st.success("Status atualizado!")
+                        st.rerun()
+                with col6:
                     if st.button("🗑️", key=f"delete_history_{index}"):
                         st.session_state.bets_history.pop(index)
                         st.rerun()
