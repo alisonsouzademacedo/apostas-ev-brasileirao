@@ -3,7 +3,6 @@ import pandas as pd
 import requests
 import math
 from datetime import datetime, timedelta
-from bs4 import BeautifulSoup
 
 st.set_page_config(page_title="Sistema EV+ - Brasileirão 2025", page_icon="⚽", layout="wide")
 st.title('⚽ Sistema de Análise de Valor (EV+) - Brasileirão 2025')
@@ -113,7 +112,7 @@ def get_season_results():
 
 @st.cache_data(ttl=1800)
 def get_upcoming_matches_thesportsdb():
-    """Busca próximos jogos usando TheSportsDB - endpoint NEXT"""
+    """Busca próximos jogos usando TheSportsDB"""
     try:
         url = f"{API_BASE}/eventsnextleague.php?id={LEAGUE_ID}"
         response = requests.get(url, timeout=10)
